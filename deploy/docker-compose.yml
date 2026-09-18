@@ -68,7 +68,7 @@ services:
       - /srv/ForGIA/db:/srv/ForGIA/db
       - /data3/ForGIA:/data3/ForGIA
       # NAS 는 **읽기 전용**. 촬영 원본을 건드리지 않는다 (P01 §1)
-      - /nfs/temp-share/ForamPhotos:/nfs/temp-share/ForamPhotos:ro
+      - /nfs/temp-share/Forams:/nfs/temp-share/Forams:ro
     deploy:
       resources:
         reservations:

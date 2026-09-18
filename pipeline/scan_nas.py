@@ -13,7 +13,7 @@ DB 도 파일도 건드리지 않는다. 반입은 `ingest_nas.py` 가 한다.
 
 ## NAS 구조
 
-    /nfs/temp-share/ForamPhotos/<촬영일>/<슬라이드>/<이름>.jpg|.png
+    /nfs/temp-share/Forams/<촬영일>/<슬라이드>/<이름>.jpg|.png
                                                    scale.toml            ← 사람이 적은 배율 (pipeline/scale.py)
                                                    <이름>_Properties.xml ← Leica 가 내보내면 (아직 안 읽는다)
 
@@ -73,11 +73,14 @@ from viewer.models import Slide                                     # noqa: E402
 
 # 로컬에서 사진이 놓이는 자리. NAS 의 <촬영일>/<슬라이드> 를 이 아래에 그대로 편다.
 PHOTOS = "photos"
+# 촬영일 폴더 이름 — `260918` 처럼 여섯 자리 숫자만. 그 밖의 폴더는 훑지 않는다
+import re                                                          # noqa: E402
+DATE_DIR = re.compile(r"^\d{6}$")
 
 
 def nas_root() -> Path:
     return Path(os.environ.get("FORGIA_NAS_PHOTOS",
-                               "/nfs/temp-share/ForamPhotos"))
+                               "/nfs/temp-share/Forams"))
 
 
 def is_mounted(path: Path) -> bool:
@@ -173,7 +176,11 @@ def scan(stable_min: float = 5.0, remember: bool = True) -> dict:
     state_out = {}
 
     rows = []
-    for date_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+    # **촬영일 꼴(`YYMMDD`)인 디렉토리만 본다.** DiaRUGA 의 `DiatomPhotos/` 는 사진
+    # 전용 폴더였지만 `Forams/` 에는 합성 자료 꾸러미(`Foram_YOLO_…`)가 같이 산다 —
+    # 그 안의 `preview/` 에 jpg 가 곧장 있어 그대로 훑으면 슬라이드로 반입된다.
+    for date_dir in sorted(p for p in root.iterdir()
+                           if p.is_dir() and DATE_DIR.match(p.name)):
         for slide_dir in sorted(p for p in date_dir.iterdir() if p.is_dir()):
             rel = f"{date_dir.name}/{slide_dir.name}"
             local = f"{PHOTOS}/{rel}"
