@@ -73,6 +73,9 @@ DiaRUGA 와 **같은 서버에 나란히** 뜬다 — `/srv/ForGIA`, nginx 80 �
 판이 따로다(`IMAGE_TAG` / `PIPELINE_TAG`). 자주 빠지는 함정은
 [CLAUDE.md](CLAUDE.md) 에 모아 두었다.
 
+**지금 어디까지 떠 있고 admin 이 무엇을 해야 하는지는 [HANDOFF.md](HANDOFF.md) 0절** —
+paleolab 첫 화면 카드 · `/foram/` 주소 · `main` 병합 · GPU 재부팅.
+
 ## 문서
 
 | | |

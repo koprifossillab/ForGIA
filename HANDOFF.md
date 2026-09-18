@@ -1,6 +1,43 @@
 # HANDOFF
 
-**2026-09-18** · 3단계(교정·동정·카탈로그·학명) 코드 끝 · 시험 배포(8093) 떠 있음. 이어서 할 사람은 여기부터.
+**2026-09-18** · 3단계(교정·동정·카탈로그·학명) 코드 끝 · 운영(8092 · `/ForGIA/`)과 시험(8093) 떠 있음. 이어서 할 사람은 여기부터.
+
+## 0. admin 이 할 것 (sudo · 2026-09-18 sclee)
+
+`sclee` 계정으로는 못 하는 넷이다 — 전부 sudo 이거나 `koprifossillab` 의 것.
+**위에서부터 차례로 하면 된다.** 셋째까지는 몇 분 일이다.
+
+1. **paleolab 첫 화면에 "Foram Viewer" 카드** — Diatom Viewer 카드 바로 아래, `🐚`,
+   `href="/foram/"`. 고친 사본이 이미 있다(`/srv/paleolab/index.html` 은 paleoadmin 644):
+
+   ```bash
+   sudo cp /srv/paleolab/index.html /srv/paleolab/index.html.bak-$(date +%y%m%d)
+   sudo cp /srv/ForGIA/www/paleolab-index.html /srv/paleolab/index.html
+   diff /srv/paleolab/index.html.bak-* /srv/paleolab/index.html    # 카드 하나만 더해졌어야 한다
+   ```
+
+2. **`/foram/` 짧은 주소** (Diatom 의 `/diatom/` 과 같은 꼴). 카드가 이것을 쓴다 —
+   안 넣으면 카드가 404 다. 스니펫에 `(forgia|foram)` 한 자리만 늘었다:
+
+   ```bash
+   sudo cp ~sclee/projects/ForGIA/deploy/nginx/ForGIA-subpath.conf /etc/nginx/snippets/ForGIA-subpath.conf
+   sudo cp ~sclee/projects/ForGIA/deploy/nginx/ForGIATest-subpath.conf /etc/nginx/snippets/ForGIATest-subpath.conf   # 시험(8093) 것 — 아직 안 들어갔다
+   grep -q ForGIATest-subpath /etc/nginx/sites-available/phyloserver || echo "phyloserver 블록에 'include snippets/ForGIATest-subpath.conf;' 한 줄"
+   sudo nginx -t && sudo systemctl reload nginx
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://paleolab/foram/     # 301 → /ForGIA/
+   ```
+
+3. **`work/20260918-sclee` 를 `main` 에 병합** — 0~3단계 커밋 전부. CI(`.github/workflows/test.yml`)는
+   `main` 에서만 돈다. 정식 판은 `v0.1.0` 태그 → CI 가 `koprifossillab/forgia` 로 민다 —
+   **Docker Hub 시크릿(`DOCKERHUB_USERNAME`·`DOCKERHUB_TOKEN`)이 저장소에 아직 없다.**
+   그 뒤 `/srv/ForGIA/bin/deploy.sh v0.1.0` 으로 지금의 로컬 빌드(`v0.3.0-dev`)를 갈아 끼운다.
+
+4. **호스트 재부팅** — NVIDIA 드라이버(커널 580.173)와 라이브러리(580.178)의 판이 어긋나
+   GPU 컨테이너가 안 뜬다. DiaRUGA 폴러도 분마다 실패 중. 이것이 풀려야 씨앗 가중치
+   재학습·파이프라인 이미지·폴러 한 바퀴(2단계의 남은 확인)가 된다.
+
+지금 운영 상태: `http://paleolab/ForGIA/` — `forgia-web-1`(`:8092`), 이 머신에서 구운
+`v0.3.0-dev`, DB 는 합성 시험 슬라이드 하나(실사진이 오면 지운다). smoke 7/7.
 
 ## 1. 한 줄 요약
 
