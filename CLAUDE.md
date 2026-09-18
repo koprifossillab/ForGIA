@@ -139,8 +139,8 @@ deploy/host/dbrun.sh  backup_db.py --note before-refilter   # 큰 작업 전에�
 ```
 
 `ops/check_db.py` 는 **반입·그룹핑·합성·검출 뒤, 문턱을 바꾼 뒤, 시야를 가르거나
-소속을 옮긴 뒤** 돌린다 — 1(판정 캐시)·2(현재 검출)·4(분류)·5(뼈대)·6(문턱)·7(층)
-번이 있다. 3·8~12 는 교정·카탈로그·도감 테이블과 함께 온다.
+소속을 옮긴 뒤** 돌린다 — 1(판정 캐시)·2(현재 검출·완료 줄)·3(교정)·4(분류)·
+5(뼈대)·6(문턱)·7(층)·8(묶음)·9(카탈로그)·10(등급·자세). 11·12(도감·출현)는 5단계.
 
 ### 저장소 소스를 그대로 사내망에 띄운다 (Django 개발 서버)
 
@@ -179,8 +179,8 @@ echo "http://172.16.116.98:$PORT/"
 **자동 시험이 있다 — 고치고 나면 이것부터 돌린다.**
 
 ```bash
-python web/manage.py test viewer --exclude-tag browser   # 2단계: 118개 · 2초
-python web/manage.py test viewer                         # 브라우저 포함 (아직 없다)
+python web/manage.py test viewer --exclude-tag browser   # 3단계: 694개 · 15초
+python web/manage.py test viewer                         # 브라우저 포함 (playwright · 8분쯤)
 ```
 
 호스트 venv 로 돈다 — 시험은 **자기 DB 를 새로 만들고 끝나면 버린다**. 그 사실을
@@ -230,23 +230,29 @@ pipeline/
   judge.py       **판정 규칙 — 여기 하나뿐이다.** 관문은 둘(장축 µm 범위 · 확신도). 분류는 `foram` 하나. torch·cv2 없이 돈다
   scan_nas.py · ingest_nas.py · group_focus_series.py · focus_stack.py   반입 넷 (DiaRUGA 그대로 · 칸 번호·분획만 더함)
   segment_forams.py   YOLO 검출 → 판정 → DB. SAM2·텍스처 없음. GPU 잠금은 `FORGIA_GPU_LOCK`(DiaRUGA 와 같은 파일)
+  rebind.py      재검출 뒤 (이미지, 묶음)의 교정을 새 후보에 IoU 로 다시 맺는다 (DiaRUGA `migrate/rebind.py`)
   refilter.py · batch_plan.py · batch_scope.py   문턱 재조정 · 폴러가 돌 묶음·조리법
   runlog.py · schema_guard.py
 web/viewer/
-  models.py      층 넷 + RunBatch·Run·Viewpoint(cell)·Frame·Stack·Image + ThresholdSet(셋)·ClassDef·Setting·Detection·Candidate. 읽기 전에 파일 첫 주석부터
+  models.py      층 넷 + RunBatch·Run·Viewpoint(cell)·Frame·Stack·Image + ThresholdSet(셋)·ClassDef·Setting·Detection·Candidate
+                 + ViewpointReview·ObjectReview·ForamObject(`taxon` FK)·Taxon(WoRMS). 읽기 전에 파일 첫 주석부터
   naming.py      폴더 이름 → 층. **규칙은 여기 하나뿐이다** (분획 토막 `>125um` 포함)
-  data.py        DB → 뷰가 쓰는 dict. **읽기 전용.** 검출 집계는 `_summary_by_sql`. 교정 조인은 3단계까지 없다
+  data.py        DB → 뷰가 쓰는 dict — **DiaRUGA 원본 통째(4,400줄)**. 교정 얹기(`_apply_review`)·저장(`save_review`)·묶기·손그림·번지기·카탈로그·`resolve_taxon`
+  catalog.py     카탈로그 번호 규칙 — 여기 하나뿐. `shape.py` 손그림 계측 · `regroup.py` 시야 가르기
   thresholds.py  문턱 미리보기·적용·이력 — `judge` 를 뷰어 쪽에서 부른다
   manage_data.py 시스템 설정이 쓰는 문 — 층을 만들고 옮기고 지운다 (쓰는 쪽)
-  views.py       목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 검출 표 · 크롭 · 문턱 · 시스템 설정(자료·운영·파이프라인) · /img · /crop · /healthz
+  views.py       목록 · 시야 목록 · **검토 화면**(`group`·`/review`·`/link`·`/spread`·`/split`) · 카탈로그 · 지점 · 정보 편집 · 검출 표 · 크롭 · 문턱 · 시스템 설정(자료·운영·학명·파이프라인) · /api/taxon/suggest · /img · /crop · /healthz
   images.py      Image 행을 만드는 문 하나
   antarctica.py · ross.py   미리 구운 해안선 (DiaRUGA 그대로)
   templates/viewer/base.html   테마 토큰(연보라) · 머리줄(톱니) · 워터마크 · 화면 공통 CSS
-  templates/viewer/group.html  **1단계용 사진 화면** — 3단계 검토 화면이 통째로 갈아 끼운다
+  templates/viewer/group.html · _detection.html · _detview_js.html(4,100줄) · catalog.html   검토·동정 화면 — DiaRUGA 그대로 + 학명 자동완성
   tests/base.py  모든 시험의 바닥 — 운영 자료에 닿지 않는가를 확인한다
   tests/factories.py  make_world() 가 DiaRUGA 와 같은 꼴 — 그쪽 시험을 옮겨 올 때 그대로 돈다
 ops/
-  check_db.py    1·2·4·5·6·7번. 번호는 DiaRUGA 와 맞춘다
+  check_db.py    1~10번. 번호는 DiaRUGA 와 맞춘다
+  export_review.py   교정 → review/<슬라이드>/g<n>.json (git 감사 기록 · `--check`)
+migrate/
+  import_worms.py    WoRMS 유공충 전체 → Taxon (`harvest` 긁기 · `load` 넣기 · `habit` 생활형)
   backup_db.py · db_sentinel.py · sync_backup_nas.py · fetch_kpdc.py · pending_slides.py
 ```
 
@@ -276,6 +282,19 @@ DiaRUGA devlog 번호다. 같은 Django·SQLite·WAL·Docker·템플릿이라 �
 - **호스트 NVIDIA 드라이버와 라이브러리의 판이 어긋나면 컨테이너가 카드를 못
   잡는다** (002 · 커널 580.173 / 라이브러리 580.178). `nvidia-smi` 가 "Driver/library
   version mismatch" 를 내면 재부팅(admin)뿐이다 — DiaRUGA 폴러도 같이 멈춘다
+- **종명은 문자열이 아니라 `Taxon` 행이다** (003). `obj.species = "…"` 는 `Taxon.resolve`
+  를 지나 **없는 이름이면 `ValueError`** 다 — DiaRUGA 의 자유 문자열을 옮겨 오는
+  코드·시험은 그 예외를 만난다. ORM 필터는 `taxon__name=` 이고 `update_fields` 는
+  `"taxon"` 이다(`"species"` 를 적으면 죽는다 — 묶기 API 가 그렇게 죽었었다)
+- **`related_name` 이 매니저를 가린다.** `ForamObject.taxon` 에 `related_name="objects"`
+  를 줬더니 `Taxon.objects` 가 역참조 서술자가 되어 `.filter` 가 없었다 — 이름을
+  `objects` 로 짓지 말 것
+- **배지 색은 `#RRGGBB` 로 적는다.** `test_classdef_css` 가 `base.html` 의
+  `.badge.<배지> { color: #… }` 를 `ClassDef.color`(R,G,B)와 대조한다 — `rgb()` 로
+  적으면 색이 없다고 본다
+- **DiaRUGA 시험을 옮길 때 묶음 이름 둘을 한 이름으로 누르지 말 것** (003).
+  `sam2-시험`(검토 대상)과 `yolo-시험`(다른 회차)이 같은 이름이 되면 "이미 검토
+  대상" 으로 열다섯 개가 죽는다
 
 **교정**
 

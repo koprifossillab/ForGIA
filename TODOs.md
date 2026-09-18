@@ -5,22 +5,19 @@
 - **씨앗 가중치 다시 굽기** — `runs/seed-cpu` 는 CPU 한 에포크(모양 확인용). P01 5.1 대로 `yolo11n-seg`·1024 로 굽고 `/data3/ForGIA/models/11n-synth-v2-1024.pt` 에 둔다
 - **파이프라인 이미지 굽기** (`deploy/Dockerfile.pipeline`) · 시험 배포에서 `poll_nas.sh` 한 바퀴 → `check_db` → 화면
 - **판정 기본값(63~2000 µm · conf 0.25)** 을 실사진으로
-- `export_yolo.py` — 3단계(교정 테이블)와 함께
 - **호스트 NVIDIA 드라이버 판 어긋남** (커널 580.173 / 라이브러리 580.178) — admin 재부팅. DiaRUGA 폴러도 같이 멈춰 있다
 
 ## 1단계에서 남은 것
 
 - **그룹핑 지문에서 조명 기울기 빼기** — 합성 사진에서 다른 시야가 0.61 로 묶였다(001). 실사진이 오면 임계값과 함께 본다
 - `scale.py` ⑴ Leica XML — 실사진 + 메타 한 벌이 오면
-- 브라우저 시험 겹(`tests/browser/`) 바닥
-- `ops/export_review.py` — 3단계(교정 테이블)와 함께
 
-## 3단계 — 교정·동정
+## 3단계에서 남은 것
 
-- `Taxon` 모델 + WoRMS 반입(`harvest_worms.py`) · `active` 로 자동완성 목록
-- `ViewpointReview`·`ObjectReview`·`ForamObject` · 시야 화면 · 카탈로그 · `export_review` · `rebind`(재검출 뒤 교정 잇기) · `export_yolo`
-- `check_db` 3(교정)·8(대표 이미지)번 · 1·2번의 교정 갈래
-- `data.py` 의 집계 SQL 에 교정 조인(`_REP_CTE`·`_SUMMARY_SQL` 의 검토 열)
+- **WoRMS 전체 반입** — 시험 배포에서 `python migrate/import_worms.py harvest` (수천 요청 · 몇 분) → `load`. 파일은 `/data3/ForGIA/worms/records.jsonl`
+- 부유성/저서성 — 과·목에 `habit` 을 붙여 아래로 물려준다(화면 또는 `import_worms.py habit`). 어느 과가 부유성인지는 사람이 정한다
+- 자세(umbilical·spiral·edge·apertural)·등급(A/B/C) **매기는 기준** — 실사진과 함께 사람과
+- DiaRUGA 의 도감(`AtlasEntry`)이 하던 "종명 옆 도판" 자리 — 5단계 도감과 함께 (`atlas_hit` 비워 둠)
 
 ## 4단계 — 분류기
 

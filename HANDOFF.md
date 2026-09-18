@@ -1,16 +1,18 @@
 # HANDOFF
 
-**2026-09-18** · 2단계(검출·판정·문턱) 코드 끝 · 시험 배포(8093) 떠 있음. 이어서 할 사람은 여기부터.
+**2026-09-18** · 3단계(교정·동정·카탈로그·학명) 코드 끝 · 시험 배포(8093) 떠 있음. 이어서 할 사람은 여기부터.
 
 ## 1. 한 줄 요약
 
 반입 넷(`scan_nas → ingest_nas → group_focus_series → focus_stack`)이 합성 자료로
 끝까지 돌고([001](devlog/20260918_001_stage1-ingest-viewer.md)), 그 위에 검출
-(`segment_forams` YOLO → `judge` → DB)·문턱 재조정(`refilter`·문턱 화면)·검출 표·
-크롭·운영 탭이 있다([002](devlog/20260918_002_stage2-detection.md)). 시험 118개.
-시험 배포가 `:8093` 에 떠 있다. **교정·동정은 아직 없다**(3단계). **GPU 는 호스트
-드라이버 판 어긋남으로 지금 못 쓴다** — 씨앗 가중치는 CPU 한 에포크짜리뿐.
-무엇을 옮길지는 [P01](devlog/20260918_P01_port-from-DiaRUGA.md).
+(`segment_forams` YOLO → `judge` → DB)·문턱 재조정([002](devlog/20260918_002_stage2-detection.md)),
+그 위에 **검토 화면(교정·묶기·손그림·번지기)·개체 카탈로그(동정)·학명 표(`Taxon` ·
+WoRMS)** 가 있다([003](devlog/20260918_003_stage3-review-taxon.md)) — DiaRUGA 와
+같은 것은 여기까지다. 시험 694개 + 브라우저. 시험 배포가 `:8093` 에 떠 있다.
+**분류기(4단계)·계수표·도감(5단계)은 아직 없다.** **GPU 는 호스트 드라이버 판
+어긋남으로 지금 못 쓴다** — 씨앗 가중치는 CPU 한 에포크짜리뿐. **WoRMS 전체
+반입은 스크립트만 있고 안 돌렸다.** 무엇을 옮길지는 [P01](devlog/20260918_P01_port-from-DiaRUGA.md).
 
 | | 지금 |
 |---|---|
@@ -19,7 +21,8 @@
 | DB | 운영 DB 없다 — `ForGIA.db` 는 개발 장비의 사본(합성 사진 슬라이드 하나) · 시험 배포는 그 스냅샷(`/data3/ForGIA/backup`) |
 | 자료 | NAS `Forams/Foram_YOLO_microscopy_scaled_v2` — **합성** 자료 660장 (P01 5.1) → `/data3/ForGIA/datasets/synth_v2`. 실사진은 장비가 아직 없다 |
 | 가중치 | `/data3/ForGIA/runs/seed-cpu` — CPU 1 epoch(`yolo11m-seg` · 640). **모양 확인용**. GPU 가 돌아오면 다시 굽는다 |
-| 단계 | **2 코드 끝 → 3(교정·동정)**. GPU 복구 뒤 씨앗 가중치 재학습·폴러 한 바퀴가 2단계의 남은 확인 |
+| 학명 | `Taxon` 표 — 개발 DB 에 *Globigerina* 속 516행만(시험). 운영에서는 `migrate/import_worms.py harvest && load` 로 유공충 전체 |
+| 단계 | **3 코드 끝 → 4(분류기)**. GPU 복구 뒤 씨앗 가중치 재학습·폴러 한 바퀴가 2단계의 남은 확인 |
 
 ## 2. 지금 돌아가는 것
 
@@ -28,22 +31,29 @@
 ```
 데이터셋 목록  /                  [남극 | 전체] 권역 탭 · 표·카드·지도(남극 전체·로스해 확대) 전환 · 숨김 토글
 시야 목록      /d/<slug>/         격자 칸마다 타일 — 대표 그림(합성본)·장수·합성 여부
-시야 사진      /d/<slug>/g/<n>/   합성본 크게 + 마스크 폴리곤 덮개 + 프레임 줄. 3단계 검토 화면이 이 주소를 물려받는다
+검토 화면      /d/<slug>/g/<n>/   **DiaRUGA 의 검토 화면 그대로** — 지우기·되살리기·분류 단축키(q/w/e/r)·
+                                  마스크 그리기·기하 고치기·같은 개체 묶기(`/link`)·다른 판에 앉히기(`/spread`)·
+                                  시야 가르기(`/split`)·검토 완료·개체 카탈로그 칸(종명·등급·자세·코멘트)·
+                                  묶음 라디오(`?batch=` 읽기 전용)·짚은 개체(`?obj=&img=`)
+개체 카탈로그  /d/<slug>/catalog/ 카드마다 번호(`RS23-GC03-071-g03-…-YS`)·종명(학명 자동완성)·유형·등급·자세·코멘트 · 일괄
 검출 표        /d/<slug>/detections/  시야마다 검출·탈락 사유
-크롭           /d/<slug>/crops/   개체 크롭 모음 (분류·탈락 필터)
+크롭           /d/<slug>/crops/   개체 크롭 모음 (분류·복구·사람지정·코멘트·지운 것·탈락분)
 문턱           /thresholds/ · /d/<slug>/thresholds/   미리보기 → 적용 → 이력 (`api/threshold/*`)
+교정 저장      POST /review       그 (이미지, 묶음)의 교정 전체를 갈아치운다 (`{"only": "done"|"note"}` 는 따로)
+학명 찾기      /api/taxon/suggest?q=   켠 것 먼저 · WoRMS 반입 전체
 지점           /loc/<지역>/<지점>/ 정보 카드(좌표·수심·KPDC) + 깊이순 시료·관찰 표
 정보 편집      /d/<slug>/edit/    관찰(분획·분할·칸 수)·시료(깊이·건시료)·지점·지역을 한 폼으로
 시스템 설정    /system-settings/          자료 — 지역·지점·시료 만들기·옮기기·지우기 · 소속 없는 관찰 붙이기
-               /system-settings/ops/      운영 — 묶음 만들기 · 검토 대상 고르기 · 조리법
+               /system-settings/ops/      운영 — 묶음 만들기 · 검토 대상 고르기 · 조리법 · **카탈로그 코드**
+               /system-settings/taxa/     학명 — 켠 학명 목록 · 이름으로 켜기 · 생활형(부유성/저서성) 물려주기 · 반입 상태
                /system-settings/pipeline/ 파이프라인 — 정찰 나이 · 최근 실행 · 밀린 슬라이드
 /crop?…                      개체 크롭 (bbox 로 잘라 낸 것)
 /img?p=&w=                   축소본 (DATA_ROOT 안만)
 /healthz                     판 · 테이블 행 수 · 무결성 깃발 · 백업 나이. 슬라이드 0 이면 unhealthy
 ```
 
-**주소 모양은 DiaRUGA 와 같다** — 없는 화면(`/review`·`/catalog/`·`/atlas/`)은
-그 단계에서 같은 이름으로 더한다.
+**주소 모양은 DiaRUGA 와 같다** — 없는 화면(`/compare/`·`/atlas/`·오프라인)은
+그 단계에서 같은 이름으로 더한다. `/api/taxon/suggest`·`/system-settings/taxa/` 는 ForGIA 의 것.
 
 ### 파이프라인 (전부 DB)
 
@@ -60,8 +70,10 @@ scan_nas → ingest_nas → group_focus_series → (fetch_kpdc --slide) → focu
 EXIF → `scale.toml` → 사이드카 → 기본값). **NAS 폴더에 `scale.toml` 을 두는 것이
 지금의 기본이다.** 합성 자료로 돌린 기록은 [001](devlog/20260918_001_stage1-ingest-viewer.md).
 
-`ops/check_db.py` 는 1(판정 캐시)·2(현재 검출)·4(분류)·5(뼈대)·6(문턱)·7(층) 번 —
-3·8~12 는 교정·카탈로그·도감 테이블과 함께 온다.
+`ops/check_db.py` 는 1(판정 캐시)·2(현재 검출·완료 줄)·3(교정)·4(분류)·5(뼈대)·
+6(문턱)·7(층)·8(묶음)·9(카탈로그 코드·번호)·10(등급·자세) — 11·12(도감·출현)는 5단계.
+`ops/export_review.py` 가 교정을 `review/<슬라이드>/g<n>.json` 으로 내보낸다
+(`--check` 로 대조). `pipeline/rebind.py` 가 재검출 뒤 교정을 새 후보에 다시 맺는다.
 
 `base.html` 에 테마(연보라 강조색 · `data-theme` · `localStorage` `forgia.theme`) ·
 머리줄 · 워터마크(로고 원본 구성 그대로) · 자리 이름 워터마크(`FORGIA_ENV_LABEL`,
@@ -69,9 +81,10 @@ EXIF → `scale.toml` → 사이드카 → 기본값). **NAS 폴더에 `scale.to
 
 ### 시험
 
-`python web/manage.py test viewer` — 118개 · 2초. DiaRUGA 시험 여덟을 옮겨 왔고
-(`test_topnav`·`test_kpdc` 가 이식의 빈틈을 실제로 잡았다) `test_scale`·
-`test_pipeline_ingest`·`test_edit_settings`·`test_judge`·`test_detections` 를 새로 썼다. `test_pipeline_ingest` 는
+`python web/manage.py test viewer --exclude-tag browser` — 694개 · 15초.
+`python web/manage.py test viewer` 는 브라우저(playwright · `tests/browser/`) 포함.
+3단계에서 DiaRUGA 시험 38 + 브라우저 31 모듈을 이름 바꾸기로 옮겨 왔다(003 에 규칙).
+옮겨 온 시험이 `Taxon.objects` 가림·배지 색·묶기 저장 칸을 실제로 잡았다. `test_pipeline_ingest` 는
 **cv2 가 있어야 돈다**(호스트 venv) — CI 의 web 러너에서는 건너뛴다.
 브라우저 겹은 아직 없다 (화면 확인은 playwright 로 손으로 했다).
 
@@ -99,6 +112,13 @@ CI(`.github/workflows/test.yml`)는 push 마다 시험을 돌리고 `v*` 태그�
   낸 검출 수를 믿지 말 것. GPU 가 돌아오면 P01 5.1 대로 다시 굽는다
 - **판정 기본값(63~2000 µm · conf 0.25)은 합성 자료 기준이다** — 실사진으로 다시
   잡는다. `judge.DEFAULTS` 하나만 고치면 `segment_forams`·`ThresholdSet` 이 따라온다
+- **종명은 `Taxon` 표에 있는 이름만 받는다** (`Taxon.resolve`). 반입 전에는 카탈로그에
+  아무 종도 못 적는다 — 시험 배포에서 `import_worms.py` 를 먼저 돌릴 것. 개발 DB 는
+  *Globigerina* 속만 들어 있다
+- **자세 넷(umbilical·spiral·edge·apertural)과 등급 A/B/C 는 이름만 바꿨다** — 매기는
+  규칙은 사람과 정한다 (003)
+- **묶음의 카탈로그 코드가 비면 그 묶음의 개체는 번호가 없다.** 운영 탭의 코드 칸 ·
+  `check_db` 9번. `yolo-seed` 는 `YS` 로 적어 두었다
 - **분획·분할이 P01 5절 표와 다른 자리에 있다** — 표는 `Sample` 이라 적었는데
   옮기면서 `Slide` 로 갔다(`models.py` 머리말). P01 은 고쳐 두었다
 - **그룹핑 임계값 0.55 는 합성 사진에서 안 맞았다** — 다른 시야 둘이 0.61 로 묶였다.
@@ -116,7 +136,7 @@ CI(`.github/workflows/test.yml`)는 push 마다 시험을 돌리고 `v*` 태그�
 | 0 뼈대 | **끝** (2026-09-18) |
 | 1 층·반입·뷰어 | **끝** (2026-09-18 · [001](devlog/20260918_001_stage1-ingest-viewer.md)). 시험 배포 떠 있음 |
 | 2 검출 | **코드 끝** (2026-09-18 · [002](devlog/20260918_002_stage2-detection.md)). 남은 것: GPU 복구 뒤 씨앗 가중치 재학습 · 파이프라인 이미지 · 폴러 한 바퀴 |
-| 3 교정·동정 | 다음. 시야 화면(`/review`) · `ViewpointReview`·`ObjectReview`·`ForamObject` · `Taxon`(WoRMS) · 카탈로그 · `rebind`·`export_review`·`export_yolo` |
+| 3 교정·동정 | **코드 끝** (2026-09-18 · [003](devlog/20260918_003_stage3-review-taxon.md)). 남은 것: WoRMS 전체 반입 · 자세·등급 기준 |
 | 4 분류기 | `classify_crops` · Endless Forams 사전학습 |
 | 5 산출·도감·오프라인 | 계수표 · 도감(사내망) · 오프라인 검토기 |
 
