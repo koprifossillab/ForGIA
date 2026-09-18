@@ -138,8 +138,9 @@ deploy/host/dbrun.sh  check_db.py       # 컨테이너 안에서 돈다
 deploy/host/dbrun.sh  backup_db.py --note before-refilter   # 큰 작업 전에는 반드시
 ```
 
-`ops/check_db.py` 는 **반입·그룹핑·합성 뒤, 시야를 가르거나 소속을 옮긴 뒤**
-돌린다 — 지금은 5번(뼈대)·7번(층·격자 칸·분획)만 있다.
+`ops/check_db.py` 는 **반입·그룹핑·합성·검출 뒤, 문턱을 바꾼 뒤, 시야를 가르거나
+소속을 옮긴 뒤** 돌린다 — 1(판정 캐시)·2(현재 검출)·4(분류)·5(뼈대)·6(문턱)·7(층)
+번이 있다. 3·8~12 는 교정·카탈로그·도감 테이블과 함께 온다.
 
 ### 저장소 소스를 그대로 사내망에 띄운다 (Django 개발 서버)
 
@@ -178,7 +179,7 @@ echo "http://172.16.116.98:$PORT/"
 **자동 시험이 있다 — 고치고 나면 이것부터 돌린다.**
 
 ```bash
-python web/manage.py test viewer --exclude-tag browser   # 1단계: 101개 · 1.2초
+python web/manage.py test viewer --exclude-tag browser   # 2단계: 118개 · 2초
 python web/manage.py test viewer                         # 브라우저 포함 (아직 없다)
 ```
 
@@ -226,14 +227,18 @@ pipeline/  scan_nas → ingest_nas → group_focus_series → focus_stack → se
 ```
 pipeline/
   scale.py       **µm/px 를 어디서 읽나 — 여기 하나뿐이다.** scale.toml(override) → Leica(아직) → EXIF → scale.toml → 사이드카 → 기본값
+  judge.py       **판정 규칙 — 여기 하나뿐이다.** 관문은 둘(장축 µm 범위 · 확신도). 분류는 `foram` 하나. torch·cv2 없이 돈다
   scan_nas.py · ingest_nas.py · group_focus_series.py · focus_stack.py   반입 넷 (DiaRUGA 그대로 · 칸 번호·분획만 더함)
+  segment_forams.py   YOLO 검출 → 판정 → DB. SAM2·텍스처 없음. GPU 잠금은 `FORGIA_GPU_LOCK`(DiaRUGA 와 같은 파일)
+  refilter.py · batch_plan.py · batch_scope.py   문턱 재조정 · 폴러가 돌 묶음·조리법
   runlog.py · schema_guard.py
 web/viewer/
-  models.py      층 넷 + RunBatch·Run·Viewpoint(cell)·Frame·Stack·Image. 읽기 전에 파일 첫 주석부터
+  models.py      층 넷 + RunBatch·Run·Viewpoint(cell)·Frame·Stack·Image + ThresholdSet(셋)·ClassDef·Setting·Detection·Candidate. 읽기 전에 파일 첫 주석부터
   naming.py      폴더 이름 → 층. **규칙은 여기 하나뿐이다** (분획 토막 `>125um` 포함)
-  data.py        DB → 뷰가 쓰는 dict. **읽기 전용.** 검출 값은 2단계까지 0 자리
+  data.py        DB → 뷰가 쓰는 dict. **읽기 전용.** 검출 집계는 `_summary_by_sql`. 교정 조인은 3단계까지 없다
+  thresholds.py  문턱 미리보기·적용·이력 — `judge` 를 뷰어 쪽에서 부른다
   manage_data.py 시스템 설정이 쓰는 문 — 층을 만들고 옮기고 지운다 (쓰는 쪽)
-  views.py       목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 시스템 설정 · /img · /healthz
+  views.py       목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 검출 표 · 크롭 · 문턱 · 시스템 설정(자료·운영·파이프라인) · /img · /crop · /healthz
   images.py      Image 행을 만드는 문 하나
   antarctica.py · ross.py   미리 구운 해안선 (DiaRUGA 그대로)
   templates/viewer/base.html   테마 토큰(연보라) · 머리줄(톱니) · 워터마크 · 화면 공통 CSS
@@ -241,7 +246,7 @@ web/viewer/
   tests/base.py  모든 시험의 바닥 — 운영 자료에 닿지 않는가를 확인한다
   tests/factories.py  make_world() 가 DiaRUGA 와 같은 꼴 — 그쪽 시험을 옮겨 올 때 그대로 돈다
 ops/
-  check_db.py    5번(뼈대)·7번(층). 번호는 DiaRUGA 와 맞춘다
+  check_db.py    1·2·4·5·6·7번. 번호는 DiaRUGA 와 맞춘다
   backup_db.py · db_sentinel.py · sync_backup_nas.py · fetch_kpdc.py · pending_slides.py
 ```
 
@@ -264,6 +269,13 @@ DiaRUGA devlog 번호다. 같은 Django·SQLite·WAL·Docker·템플릿이라 �
 - **합성 사진의 저주파 지문은 서로 닮는다** (001). 빈 바탕에 개체 하나뿐이라
   다른 시야가 0.61 로 묶였다. 그룹핑 임계값·지문은 **실사진으로** 잡는다 — 합성
   자료로 맞춘 값을 믿지 말 것
+- **GPU 잠금은 DiaRUGA 의 파일을 그대로 가리킨다** (002). `FORGIA_GPU_LOCK` 을
+  빼면 `/data3/ForGIA/locks/gpu.lock` 로 떨어져 **잠금이 둘로 갈라진다** — 두
+  파이프라인이 겹쳐 돌고 8 GB 카드에서 둘 다 죽는다. `deploy/srv/docker-compose.yml`
+  의 환경변수와 `/data3/DiaRUGA/locks` 마운트를 함께 본다
+- **호스트 NVIDIA 드라이버와 라이브러리의 판이 어긋나면 컨테이너가 카드를 못
+  잡는다** (002 · 커널 580.173 / 라이브러리 580.178). `nvidia-smi` 가 "Driver/library
+  version mismatch" 를 내면 재부팅(admin)뿐이다 — DiaRUGA 폴러도 같이 멈춘다
 
 **교정**
 

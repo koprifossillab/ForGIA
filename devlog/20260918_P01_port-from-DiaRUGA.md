@@ -86,6 +86,9 @@ edge view 가 동정에 필수라 선택지만 갈아끼운다. `grade`(등급)�
 쓰므로 `flock` 파일을 공유해야 한다** — DiaRUGA 의 `segment_diatoms` 안 잠금이
 프로젝트 안에 있어서 ForGIA 폴러가 그것을 모른다. 시스템 잠금(`/run/lock/paleo-gpu.lock`
 같은 것)으로 둘 다 옮기는 것이 맞고, **DiaRUGA 쪽 수정이 하나 생긴다.**
+> 2단계에서 고쳤다(002): DiaRUGA 의 잠금 파일(`/data3/DiaRUGA/locks/gpu.lock`)을
+> ForGIA 가 **그대로 가리키면** 같은 inode 에 `flock` 이 걸린다 — `FORGIA_GPU_LOCK`
+> 환경변수 + 디렉토리 마운트로 끝이고 **DiaRUGA 쪽은 안 고친다.**
 
 ### 3.2 `ops/` — **그대로 80%**
 
@@ -238,7 +241,7 @@ DiaRUGA `CLAUDE.md` 의 "자주 빠지는 함정" 은 대부분 Django·SQLite·
 | **검출 씨앗** | **NAS `Forams/Foram_YOLO_microscopy_scaled_v2` 로 YOLO 를 먼저 굽는다**(3.6). 그래서 **SAM2 는 아예 안 가져온다** — DiaRUGA 가 SAM2 로 시작한 것은 첫 가중치가 없어서였다 | `segment_forams` · `requirements-pipeline` 에서 SAM2 뺌 |
 | **도감** | **사내망 안에서만 보는 PDF 도판** — DiaRUGA 틀 그대로. **오프라인 꾸러미·외부 배포는 안 만든다**(상업 출판 도감이라) | 3.6 · `build_offline_atlas` 는 도감에 안 쓴다 |
 | **라이선스** | **AGPL-3.0**, DiaRUGA 와 같게. 분류기도 같은 저장소 | `LICENSE` |
-| **GPU 잠금** | **시스템 잠금으로 둘 다 옮긴다** — `/run/lock/paleo-gpu.lock` 같은 공유 경로를 `flock`. **DiaRUGA `segment_diatoms.py` 수정 하나가 생긴다** — 저쪽에 따로 알리고 한다 | 3.1 · 2단계 |
+| **GPU 잠금** | ~~시스템 잠금으로 둘 다 옮긴다~~ → **DiaRUGA 의 잠금 파일을 ForGIA 가 그대로 가리킨다**(`FORGIA_GPU_LOCK=/data3/DiaRUGA/locks/gpu.lock` + 마운트). DiaRUGA 쪽 수정 없음 (002) | 3.1 · 2단계 |
 | **뷰어 테마** | **연보라.** `base.html` 색 토큰(`--accent` 계열)만 갈고 밝음/어둠 두 벌 다 채운다 — DiaRUGA 201 의 `data-theme` 틀 그대로. 강조색은 로고 원본의 `#c4b5fd` | 0단계 (했다) |
 | **이름 표기** | **`ForGIA`** — 로고 워드마크의 대문자 그대로(사용자 2026-09-18). DiaRUGA 규칙대로 대문자 자리가 약자다. 저장소·경로·DB 전부 `ForGIA`, 소문자가 강제되는 자리만 `forgia`. GitHub 저장소 이름은 admin 이 바꾼다 | 1절 |
 | **로고** | 사용자 제공 `forgia_logo.svg`(부유성 마크 + 워드마크 + 저서성 사슬 + 밑줄). `docs/assets/logo/` 에 원본, `_logo.html`·`_logo_benthic.html` 로 갈라 심었다 — DiaRUGA `_logo.html` 과 같은 방식(글자는 HTML, 색은 `currentColor`) | 0단계 (했다) |

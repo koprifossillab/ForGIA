@@ -5,5 +5,6 @@
 
 | 판 | 날짜 | 무엇 |
 |---|---|---|
+| — | 2026-09-18 | 2단계 검출. `judge`(관문 둘) · `segment_forams`(YOLO) · `refilter`·`batch_plan` · `Detection`·`Candidate`·`ThresholdSet`·`ClassDef` · 검출 표·크롭·문턱·운영 탭 · `check_db` 1·2·4·6번 · 폴러 4b · 시험 118개 ([002](devlog/20260918_002_stage2-detection.md)) |
 | — | 2026-09-18 | 1단계 층·반입·뷰어. 반입 넷 · `scale.py` · 화면 일곱 · `check_db` 5·7번 · 시험 101개 ([001](devlog/20260918_001_stage1-ingest-viewer.md)) |
 | — | 2026-09-18 | 0단계 뼈대. 층 넷 · 목록 · `/healthz` · 테마(연보라) · 로고 · 배포 틀 · 시험 11개 ([P01](devlog/20260918_P01_port-from-DiaRUGA.md)) |
