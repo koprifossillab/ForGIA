@@ -64,7 +64,7 @@ EXIF → `scale.toml` → 사이드카 → 기본값). **NAS 폴더에 `scale.to
 
 ### 배포 틀 (아직 안 돌렸다)
 
-`deploy/` 는 DiaRUGA v0.29.0 것을 이름·포트만 바꿔 옮겼다 — 8091/9092, `/srv/ForGIA`,
+`deploy/` 는 DiaRUGA v0.29.0 것을 이름·포트만 바꿔 옮겼다 — 8092/8093, `/srv/ForGIA`,
 `/data3/ForGIA`. **한 번도 돌려 보지 않았다.** 1단계 끝에 `testdeploy.sh` 로
 시험 배포를 먼저 띄워 본다. nginx 조각은 DiaRUGA 의 phyloserver 블록에 `include`
 한 줄을 더하는 것이라 sudo 가 필요하다.

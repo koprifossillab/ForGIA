@@ -69,7 +69,7 @@ python web/manage.py test viewer
 ## 배포
 
 DiaRUGA 와 **같은 서버에 나란히** 뜬다 — `/srv/ForGIA`, nginx 80 의 `/ForGIA/`,
-컨테이너 포트 8091(운영)·9092(시험). 뷰어와 파이프라인이 컨테이너 두 벌로 돌고
+컨테이너 포트 8092(운영)·8093(시험). 뷰어와 파이프라인이 컨테이너 두 벌로 돌고
 판이 따로다(`IMAGE_TAG` / `PIPELINE_TAG`). 자주 빠지는 함정은
 [CLAUDE.md](CLAUDE.md) 에 모아 두었다.
 

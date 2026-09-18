@@ -25,7 +25,7 @@
 set -uo pipefail        # -e 는 안 쓴다. 검사가 실패해도 나머지를 다 보여준 뒤 끝낸다
 
 SRV="${FORGIA_SRV:-/srv/ForGIA}"
-HEALTH="${FORGIA_HEALTH:-http://127.0.0.1:8091/healthz}"
+HEALTH="${FORGIA_HEALTH:-http://127.0.0.1:8092/healthz}"
 # nginx 를 거치는 길. 사내 VPN 이 80 만 통과시켜 여기가 실제로 사람이 쓰는 주소다.
 SITE="${FORGIA_SITE:-http://127.0.0.1/ForGIA/}"
 # 그 블록의 server_name. Host 를 안 맞추면 다른 vhost 로 떨어진다.

@@ -27,7 +27,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_SRV="${FORGIA_TEST_SRV:-/srv/ForGIA/test}"
 PROD_SRV="${FORGIA_SRV:-/srv/ForGIA}"
-HEALTH="${FORGIA_TEST_HEALTH:-http://127.0.0.1:8091/healthz}"
+HEALTH="${FORGIA_TEST_HEALTH:-http://127.0.0.1:8093/healthz}"
 SITE="${FORGIA_TEST_SITE:-http://127.0.0.1/ForGIATest/}"
 BACKUP_DIR="${FORGIA_BACKUP_DIR:-/data3/ForGIA/backup}"
 

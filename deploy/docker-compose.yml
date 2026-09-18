@@ -55,7 +55,7 @@ services:
     image: koprifossillab/forgia:${FORGIA_TAG:-latest}
     entrypoint: ["/app/deploy/entrypoint-web.sh"]
     ports:
-      - "127.0.0.1:8091:9090"
+      - "127.0.0.1:8092:9090"
 
   pipeline:
     <<: *common

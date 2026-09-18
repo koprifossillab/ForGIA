@@ -22,7 +22,7 @@
 set -euo pipefail
 
 SRV="${FORGIA_SRV:-/srv/ForGIA}"
-HEALTH="${FORGIA_HEALTH:-http://127.0.0.1:8091/healthz}"
+HEALTH="${FORGIA_HEALTH:-http://127.0.0.1:8092/healthz}"
 SERVICE="${FORGIA_SERVICE:-web}"
 FLAG="$SRV/maintenance.flag"
 SNAP_DIR="${FORGIA_BACKUP_DIR:-/data3/ForGIA/backup}/pre_deploy"

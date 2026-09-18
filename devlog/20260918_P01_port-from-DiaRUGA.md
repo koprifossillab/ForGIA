@@ -39,7 +39,7 @@ DiaRUGA 저장소를 fork 하지 않는다. 642 커밋의 이력이 전부 규�
 | `diaruga` | `forgia` | Docker Hub `koprifossillab/forgia` · 파이썬 패키지 `forgiaweb` · `localStorage` 키 |
 | `DIARUGA_*` | `FORGIA_*` | 환경변수 |
 | `diatom` (생물 이름 자리) | `foram` | `segment_forams.py` · YOLO 클래스 `foram` · NAS 폴더 |
-| 포트 8090 / 9091 | **8091 / 9092** | nginx 뒤 컨테이너 · 시험 컨테이너 (충돌 안 나게) |
+| 포트 8090 / 9091 | **8092 / 8093** | nginx 뒤 컨테이너 · 시험 컨테이너 (충돌 안 나게) |
 | `DiatomObject` | `ForamObject` | 모델 |
 
 **공통 부품을 패키지로 빼지 않는다** — 아직. 두 번째 프로젝트에서 빼면 첫
