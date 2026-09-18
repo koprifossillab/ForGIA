@@ -16,9 +16,9 @@ WoRMS)** 가 있다([003](devlog/20260918_003_stage3-review-taxon.md)) — DiaRU
 
 | | 지금 |
 |---|---|
-| 뷰어 | 시험 배포 `forgia-test-web-1`(`:8093` · `koprifossillab/forgia:v0.1.0-dev`). 운영(8092)은 아직 안 띄웠다 — 판 `v0.1.0` 을 admin 이 정한다 |
+| 뷰어 | **운영이 떠 있다** — `forgia-web-1`(`:8092` · `koprifossillab/forgia:v0.3.0-dev`, 이 머신에서 구운 것 · Docker Hub 에는 없다) → `http://paleolab/ForGIA/`. 시험 `forgia-test-web-1`(`:8093` · v0.1.0-dev). 정식 판 `v0.1.0` 태그는 admin 이 |
 | 파이프라인 | 반입 넷 + 검출(`segment_forams` · YOLO 하나)·`judge`·`refilter`·`batch_plan`. 폴러 4b 검출 고리 있음. **파이프라인 이미지는 아직 안 구웠다** |
-| DB | 운영 DB 없다 — `ForGIA.db` 는 개발 장비의 사본(합성 사진 슬라이드 하나) · 시험 배포는 그 스냅샷(`/data3/ForGIA/backup`) |
+| DB | 운영 `/srv/ForGIA/db/ForGIA.db` = 개발 DB 의 사본 — **합성 사진 슬라이드 하나**(`obs_label` "합성 시험자료" · 사진은 `/data3/ForGIA/photos/260918/`). 실사진이 오면 이 슬라이드는 지운다 |
 | 자료 | NAS `Forams/Foram_YOLO_microscopy_scaled_v2` — **합성** 자료 660장 (P01 5.1) → `/data3/ForGIA/datasets/synth_v2`. 실사진은 장비가 아직 없다 |
 | 가중치 | `/data3/ForGIA/runs/seed-cpu` — CPU 1 epoch(`yolo11m-seg` · 640). **모양 확인용**. GPU 가 돌아오면 다시 굽는다 |
 | 학명 | `Taxon` 표 — 개발 DB 에 *Globigerina* 속 516행만(시험). 운영에서는 `migrate/import_worms.py harvest && load` 로 유공충 전체 |
@@ -127,7 +127,13 @@ CI(`.github/workflows/test.yml`)는 push 마다 시험을 돌리고 `v*` 태그�
   새로 만들어 붙이면 안 붙는다(`attached` 를 저장 전에 계산). ForGIA 는 고쳤다.
   저쪽에 알릴 것 (001)
 - **파이프라인 이미지는 아직 안 구웠다.** 폴러 4b 는 코드만 있고 컨테이너로 한
-  바퀴 돈 적이 없다 — GPU 가 돌아온 뒤 시험 배포에서 먼저 돌린다
+  바퀴 돈 적이 없다 — GPU 가 돌아온 뒤 시험 배포에서 먼저 돌린다. `/srv/ForGIA/.env`
+  의 `PIPELINE_TAG=unbuilt` 는 **자리만** 채운 것이다(비면 compose 가 web 까지
+  못 띄운다) — 이미지를 구우면 그 판으로 고친다
+- **paleolab 첫 화면의 "Foram Viewer" 카드는 admin 이 넣는다** (`/srv/paleolab/index.html`
+  은 paleoadmin 소유 644). 고친 사본이 `/srv/ForGIA/www/paleolab-index.html` 에 있고,
+  카드가 쓰는 `/foram/` 은 `deploy/nginx/ForGIA-subpath.conf` 에 넣었다 — 설치된
+  스니펫(`/etc/nginx/snippets/`)에도 옮겨야 산다(sudo)
 
 ## 4. 어디까지 왔나
 

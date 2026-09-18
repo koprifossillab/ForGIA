@@ -35,4 +35,6 @@
 - GitHub 저장소 이름 `Forgia` → `ForGIA` (admin) · 로컬 원격 갱신
 - Docker Hub 시크릿(`DOCKERHUB_USERNAME`·`DOCKERHUB_TOKEN`)을 저장소에
 - nginx `include snippets/ForGIATest-subpath.conf` (sudo · 운영 것은 들어갔다)
+- **paleolab 첫 화면에 Foram Viewer 카드** — `sudo cp /srv/ForGIA/www/paleolab-index.html /srv/paleolab/index.html` · `/foram/` 알리아스는 `sudo cp deploy/nginx/ForGIA-subpath.conf /etc/nginx/snippets/ && sudo nginx -t && sudo systemctl reload nginx`
+- 운영 이미지 `v0.3.0-dev` 는 이 머신에서 구운 것 — 정식 판(`v*` 태그 → CI → Docker Hub)으로 갈아 끼운다
 - ~~DiaRUGA `views.py:741` 의 `attached` 버그를 저쪽에 알린다~~ — DiaRUGA `TODOs.md` 에 적었다 (2026-09-18)
