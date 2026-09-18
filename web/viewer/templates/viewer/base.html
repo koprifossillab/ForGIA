@@ -70,6 +70,10 @@
     --envwm-op: .17;
     /* 묶음 머리줄의 옅은 면. 뜻 있는 색(`--accent` 등)을 빌리지 않는 중립 면 */
     --group-bg: #1e1b29; --group-bg-hi: #262234;
+    /* 로스해 확대의 수심 띠 — 얕은 곳(0)부터 깊은 곳(4000 m)까지. 테마마다
+       따로 준다(DiaRUGA 107). 뜻 있는 색(`--accent`)과는 갈라 둔다 */
+    --sea-0: #1b2230; --sea-200: #1a2a3e; --sea-1000: #18334d;
+    --sea-2000: #163c5d; --sea-3000: #13456e; --sea-4000: #0f4e80;
   }
   /* 어두운 값이 기본이고 밝은 값은 `data-theme="light"` 가 켠다. **미디어 쿼리가
      아니다** — 여기 미디어 쿼리를 되살리면 화면에서 고른 것을 OS 가 덮는다. */
@@ -86,6 +90,8 @@
       --wm-op: .07;
       --envwm-op: .14;
       --group-bg: #eeeaf7; --group-bg-hi: #e4dff1;
+      --sea-0: #e9f1fa; --sea-200: #d5e4f4; --sea-1000: #bcd4ec;
+      --sea-2000: #a2c3e3; --sea-3000: #87b1d9; --sea-4000: #6d9fce;
   }
   * { box-sizing: border-box; }
   ::placeholder { color: var(--dim); opacity: .5; }
@@ -161,6 +167,15 @@
   :root[data-theme-pick="system"] .themebtn .ic-system,
   :root[data-theme-pick="light"] .themebtn .ic-light,
   :root[data-theme-pick="dark"] .themebtn .ic-dark { display: block; }
+  /* **관리로 가는 톱니.** 머리줄 오른쪽 끝, 모든 화면에서 같은 자리다 (DiaRUGA
+     2026-08-08). `/system-settings/` 는 소속을 잃은 관찰을 잡아 주는 유일한
+     화면이라 어디서든 닿아야 한다. **로고와 닮으면 안 된다** — 채운 실루엣이다. */
+  .gearlink {
+    align-self: center; display: inline-flex; margin-left: 12px;
+    padding: 4px; border-radius: 7px; color: var(--dim);
+  }
+  .gearlink svg { width: 17px; height: 17px; display: block; }
+  .gearlink:hover { color: var(--accent); background: var(--bg); }
   /* nav 가 없는 화면에서는 이것이 오른쪽으로 가야 한다 */
   header h1 + .sub + .themebtn, header .sub + .themebtn { margin-left: auto; }
   main { padding: 5px 18px 22px; max-width: 1500px; margin: 0 auto; }
@@ -168,6 +183,595 @@
   .dim { color: var(--dim); }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   .crumb { font-size: 13px; margin-bottom: 14px; }
+
+  /* --- 화면들이 함께 쓰는 CSS. DiaRUGA v0.29.0 `base.html` 에서 1단계 화면
+     (목록·카드·지도·지점·시야 목록·프레임 줄)의 것을 골라 왔다. 규조 분류 색
+     (폴리곤·배지의 `.rod`·`.round` 등)은 뺐다 — 2·3단계에서 `ClassDef` 와 함께
+     온다. 스타일이 여기 있는 이유: 부모를 extends 한 템플릿에서 block 바깥에
+     적은 것은 렌더되지 않는다. --- */
+
+
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 15px; }
+  .stat-row { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; }
+  .stat b { display: block; font-size: 19px; font-weight: 650; }
+  .stat span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .tile {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; overflow: hidden; display: block; color: inherit;
+  }
+  .tile:hover { border-color: var(--accent); text-decoration: none; }
+  /* **`.tile` 의 `display: block` 이 `[hidden]` 을 이긴다** — 브라우저 기본
+     `[hidden] { display: none }` 은 특이도가 (0,0,1) 이라 (0,1,0) 인 위 규칙에
+     진다. 감추라고 해 놓고 그대로 보이는, 예외도 경고도 없는 종류의 고장이다.
+     이 저장소가 `.tools` 에서 같은 자리를 한 번 밟았다. */
+  .grid .tile[hidden] { display: none; }
+  .tile img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
+  /* 표지 + 검출 마스크. 마스크가 있어야 목록에서 "무엇이 잡혔는지" 가 보인다. */
+  .tile .thumbwrap {
+    display: block; position: relative; width: 100%;
+    aspect-ratio: 4/3; background: #000;
+  }
+  .tile .thumbwrap img { width: 100%; height: 100%; aspect-ratio: auto; }
+  .tile .thumbwrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tile .thumbwrap polygon { stroke-width: 0; }
+  /* 사진이 여럿인 시야 — 인스타그램의 캐러셀 표시와 같은 모양.
+     판을 깔지 않고 그림자로 띄운다. 썸네일은 밝기가 제각각이라 흰 선만으로는
+     밝은 사진에서 묻히는데, drop-shadow 는 어두운 사진에서도 거슬리지 않는다. */
+  .tile .multi {
+    position: absolute; right: 7px; top: 7px; z-index: 2;
+    width: 20px; height: 20px; line-height: 0;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.85));
+  }
+  .tile .multi svg { width: 100%; height: 100%; display: block; }
+  .tile .multi .front {
+    fill: none; stroke: #fff; stroke-width: 2;
+  }
+  .tile .multi .back {
+    fill: none; stroke: #fff; stroke-width: 2;
+    stroke-linecap: round;
+  }
+  .tile .meta { padding: 8px 10px; font-size: 12px; }
+  .tile .meta .t { font-weight: 600; }
+
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; border: 1px solid var(--line); color: var(--dim);
+  }
+  .badge.on { color: var(--good); border-color: var(--good); }
+  /* 검토 완료 — 다른 배지(초록·주황)와 갈라져야 목록에서 한눈에 짚인다 */
+  .badge.done { color: var(--danger); border-color: var(--danger); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+
+  /* 시야 격자 — 2컬럼. 800 px 썸네일이면 마스크 위치는 충분히 보이고,
+     areolae 를 확대해 볼 일은 그룹 화면이 맡는다(원본 화소 전환이 있다). */
+  .vpgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+  .vpcell {
+    display: block; color: inherit; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 9px; overflow: hidden;
+  }
+  .vpcell:hover { border-color: var(--accent); text-decoration: none; }
+  .vphead {
+    display: flex; gap: 6px; align-items: baseline;
+    padding: 6px 9px; font-size: 12px; border-bottom: 1px solid var(--line);
+  }
+  .vpimg { position: relative; line-height: 0; background: #000; }
+  .vpimg img { width: 100%; display: block; }
+  .vpimg svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .vpimg polygon { stroke-width: 0; }
+
+  .frames { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .frame { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .frame.best { border-color: var(--good); }
+  .frame img { width: 100%; display: block; background: #000; cursor: zoom-in; }
+  .frame .meta { padding: 8px 10px; font-size: 12px; }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 5px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .frame.best .bar i { background: var(--good); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th .unit { text-transform: none; }
+  th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .scroll { overflow-x: auto; }
+  .pagehead {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .pagehead h2 { margin: 0; }
+  .pagehead .thlink { font-size: 13px; font-weight: 400; margin-left: 10px; }
+
+  /* **제목 줄의 오른쪽 링크 묶음** (사용자 요청 2026-08-08).
+     시야 목록의 `검출 결과만 보기`·`계측 표`·`정보 편집` 이 여기 놓인다 —
+     앞의 둘은 머리줄의 nav 블록에 있었고 `정보 편집` 은 본문 문단 한가운데
+     묻혀 있었다. **같은 슬라이드를 다른 각도로 보는 길**이라 한자리에 모으는
+     것이 맞다.
+
+     (그 블록 이름을 여기 태그 문법으로 적지 말 것 — **Django 는 CSS 주석
+     안에서도 태그로 읽는다.** 방금 그렇게 적었다가 "block tag with name 'nav'
+     appears more than once" 로 화면이 죽었다.)
+
+     `margin-left:auto` 로 오른쪽 끝에 붙인다 — `.pagehead` 가 flex 라
+     제목·묶음 표시와 이 묶음 사이가 벌어진다.
+
+     **링크처럼 보이게 한다.** 이 앱의 `a` 는 `text-decoration:none` 이 기본이라
+     본문 색과 섞이면 누를 수 있는 것인지 안 읽힌다 — 실제로 `정보 편집` 이
+     그랬다. 밑줄을 늘 깔고, 강조색을 주고, `→` 로 "가는 곳" 임을 더한다.
+     `.chip` 을 안 쓴 이유: 그쪽은 **거르는 단추**의 모양이라(갤러리의 형태
+     칩들) 같은 껍데기를 쓰면 눌러서 걸러지는 것으로 읽힌다. */
+  .pagelinks { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap;
+               align-items: center; }
+  .pagelinks a {
+    font-size: 13px; color: var(--accent);
+    text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .pagelinks a:hover { text-decoration-color: var(--accent); }
+  .pagelinks a::after { content: " →"; opacity: .65; text-decoration: none; }
+  /* 권역 갈래. 가운데에 둔다 — 좌우 auto 여백이 h2 와 보기방식 사이에 밀어 넣는다.
+     보기방식(우상단)과 같은 껍데기를 써서 같은 종류의 도구로 읽히게 한다. */
+  .areatabs {
+    margin: 0 auto; display: flex; gap: 2px; padding: 2px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .areatabs a {
+    display: flex; align-items: center; gap: 6px; padding: 3px 14px;
+    border-radius: 6px; color: var(--dim); text-decoration: none;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .areatabs a:hover { color: var(--fg); background: var(--bg); }
+  .areatabs a.on { background: var(--accent); color: #fff; }
+  /* 건수를 함께 보인다 — 빈 탭인지 눌러 보기 전에 알 수 있어야 한다 */
+  .areatabs .n {
+    font-size: 11px; font-weight: 500; opacity: .75;
+    font-variant-numeric: tabular-nums;
+  }
+  .viewtoggle {
+    margin-left: 0; display: flex; gap: 2px; padding: 2px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .viewtoggle button {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; height: 26px; padding: 0; cursor: pointer;
+    background: transparent; border: 0; border-radius: 6px;
+    color: var(--dim);
+  }
+  .viewtoggle button:hover { color: var(--fg); background: var(--bg); }
+  /* 고른 쪽은 눌린 것처럼 — 테두리만으로는 어느 쪽인지 한눈에 안 잡힌다 */
+  .viewtoggle button.on { background: var(--accent); color: #fff; }
+  .viewtoggle svg { fill: currentColor; display: block; }
+
+  /* --- 관찰 (한 시료를 처리 방법을 달리해 여러 번 본 것) ------------------
+     화면 넷(표·카드·지도·코어 페이지)이 같은 선택자를 쓴다. `_obs.html` 이
+     그 배지를 그리는 자리다. */
+
+  /* 숨긴 항목 토글. 권역 갈래와 같은 껍데기 — 같은 종류의 도구로 읽혀야 한다 */
+  .hidetoggle {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 11px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--dim); text-decoration: none; font-size: 12px; font-weight: 600;
+    white-space: nowrap;
+  }
+  .hidetoggle:hover { color: var(--fg); }
+  .hidetoggle.on { background: var(--accent); color: #fff; border-color: transparent; }
+  .hidetoggle .hm { font-size: 11px; opacity: .8; }
+  .hidetoggle .n {
+    font-size: 11px; font-weight: 500; opacity: .75;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 관찰 이름표. 사람이 적은 것(`산처리`)이 있으면 그것, 없으면 `#1`.
+     **관찰이 하나뿐이면 아예 안 그려진다** — 지금까지의 화면이 그대로다. */
+  .obsbadge {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(120,140,255,.16); color: #8fa0ff;
+    border: 1px solid rgba(120,140,255,.3);
+    font-size: 10.5px; font-weight: 600; white-space: nowrap;
+    vertical-align: 1px;
+    /* **자를 필요가 없다.** 이름표가 10자로 못 박혀 있어(`models.Slide`) 배지가
+       열을 밀 만큼 길어지지 못한다 — 들어온 뒤 감추는 것보다 못 들어오게 하는
+       쪽이 낫다. 감춘 값은 title 에만 남아 docx 로 구우면 사라진다. */
+  }
+
+  /* 숨김·집계 제외의 기호. **색이 주고 기호는 보조다** — 이 목록이 docx 로
+     구워져 NAS 로 나가고, 흑백 출력·색각 이상에서 색만으로는 정보가 통째로
+     사라진다. 그래서 흐림(색)과 기호를 늘 함께 낸다. */
+  .hidemark { margin-left: 5px; font-size: 11px; color: var(--dim); }
+  /* 집계 제외는 **이름이 아니라 숫자 옆**이다 — 표에서 숫자 옆의 `*` 는
+     "합계에 안 들어간다" 는 각주 관례라 자리가 이미 정해져 있고, 숨김의 `※` 와
+     자리가 안 겹쳐 둘이 경쟁하지 않는다. */
+  .exmark { color: #e0a33a; font-weight: 700; margin-left: 1px; }
+
+  /* 숨긴 줄. 토글을 켜야 보이는 것이라 "평소엔 안 보이는 것" 이 한눈에 읽혀야
+     한다. 흐리게만 하고 지우지 않는다 — 눌러서 속성을 고칠 수 있어야 한다. */
+  .rowhidden { opacity: .45; }
+  .rowhidden:hover { opacity: .8; }
+  /* 합계 아래 각주. 합계가 `숨김` 을 안 읽어 생기는 어긋남을 적는 자리다.
+     **표 밖에 있다** — 표는 가로로 넘쳐 스크롤되므로 안에 두면 문장이 잘린다. */
+  .totnote {
+    margin: 8px 2px 0; font-size: 11.5px; color: var(--dim); line-height: 1.7;
+    max-width: 96ch;
+  }
+  .totnote b { color: var(--fg); font-weight: 600; }
+
+  /* 정보 편집의 관찰 상자 */
+  .obsbox {
+    margin: 14px 0 4px; padding: 10px 12px 12px;
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .obsbox legend { padding: 0 6px; font-size: 12px; color: var(--dim); }
+  /* 열 자짜리 칸이 화면 폭을 다 차지하면 "길게 적어도 되나 보다" 로 읽힌다.
+     `.propform input` 의 `width:100%` 를 여기서만 되돌린다. */
+  .obsbox input[type="text"] { max-width: 18ch; }
+  .obsbox label.ck {
+    display: flex; align-items: flex-start; gap: 8px; margin-top: 10px;
+    font-weight: 500;
+  }
+  /* **`.propform input` 이 `display:block; width:100%` 를 걸고 있다** — 글자
+     칸에 맞춘 규칙인데 체크박스까지 잡아서, 네모 하나가 줄을 통째로 먹고 옆의
+     설명이 폭 0 으로 눌려 **글자가 세로로 한 자씩 흘렀다**(정보 편집 페이지가
+     3,464px 이 됐다). 예외도 경고도 없는 종류다 — 특이도로 되찾아 온다. */
+  .obsbox label.ck input {
+    width: auto; margin-top: 3px; flex: 0 0 auto;
+  }
+  /* 설명이 남는 폭을 다 쓰게 한다. `min-width: 0` 이 없으면 flex 항목이 제
+     내용 최소폭 아래로 안 줄어들어 상자를 밀어낸다. */
+  .obsbox label.ck > span { flex: 1 1 auto; min-width: 0; }
+  .obsbox label.ck .hint { display: block; margin-top: 2px; }
+
+  .dsview .asCards, .dsview .asMap { display: none; }
+  .dsview.showCards .asTable, .dsview.showMap .asTable { display: none; }
+  /* 카드 판은 이제 코어 묶음(details)을 세로로 쌓는다 — 격자는 묶음 **안**의
+     .cards 가 만든다. 여기를 grid 로 두면 묶음끼리 옆으로 늘어선다. */
+  .dsview.showCards .asCards { display: block; }
+  .dsview.showMap .asMap { display: block; }
+
+  /* --- 코어 묶음 (표·카드 공통) ---
+     코어가 분석의 단위다(깊이에 따른 변화를 보는 것이 목적이다). 슬라이드가
+     늘수록 평평한 목록은 못 읽는다.
+
+     **구분은 ▶ 와 들여쓰기가 낸다. 색은 거드는 것이다.** 접히는 머리줄은
+     "눌리는 것" 과 "지금 열렸나" 를 같이 내야 하는데 옅은 면만으로는 둘 다
+     못 낸다. 들여쓰기는 테마와 싸울 일이 없는 단서다. */
+  .tw {
+    display: inline-block; width: 12px; font-size: 10px; color: var(--dim);
+    /* ▶ 하나를 돌려 ▼ 로 쓴다 — 글자를 갈아 끼우면 폭이 흔들린다 */
+    transition: transform .12s ease; transform: rotate(90deg);
+  }
+  .tw::before { content: "\25B6"; }
+  .csgroup.closed .tw, .cgroup:not([open]) .tw { transform: rotate(0deg); }
+
+  .dslist .chead > td { background: var(--group-bg); font-weight: 650; }
+  .dslist .chead { cursor: pointer; }
+  .dslist .chead:hover > td { background: var(--group-bg-hi); }
+  .dslist .chead:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .dslist .chead .ghead-sub { font-weight: 400; margin-left: 7px; font-size: 11.5px; }
+  /* 속 줄은 이름 칸만 살짝 들여쓴다 — 표에서는 이 한 줄이면 된다 */
+  .dslist .csgroup > tr:not(.chead) .dsname { padding-left: 28px; }
+  .dslist .csgroup.closed > tr:not(.chead) { display: none; }
+  /* 열 줄을 넘는 묶음은 처음 열 줄만. `<tbody>` 는 스크롤 상자가 못 되므로
+     (table-layout: fixed 로 열 너비를 못 박아야 한다) 잘라서 낸다. */
+  .dslist .csgroup:not(.all) > tr.extra { display: none; }
+  .dslist .morerow td { text-align: left; padding-left: 28px; }
+  .dslist .morebtn {
+    font: inherit; font-size: 11.5px; padding: 2px 10px; cursor: pointer;
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--line); border-radius: 999px;
+  }
+  .dslist .morebtn:hover { border-color: var(--accent); }
+
+  .cgroup {
+    border: 1px solid var(--line); border-radius: 10px;
+    margin-bottom: 12px; background: var(--group-bg);
+  }
+  .cgroup > summary {
+    cursor: pointer; padding: 9px 13px; font-size: 13px;
+    display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+    border-radius: 10px;
+  }
+  .cgroup > summary:hover { background: var(--group-bg-hi); }
+  /* 브라우저가 그리는 삼각형을 끄고 표와 같은 ▶ 를 직접 그린다 —
+     모양이 달라지면 두 화면이 남남이 된다. */
+  .cgroup > summary::marker,
+  .cgroup > summary::-webkit-details-marker { content: ""; display: none; }
+  .cgroup > summary .gsum { margin-left: auto; font-size: 11.5px; }
+  .cgroup > .cards { padding: 0 13px 13px; }
+  /* 아주 큰 묶음만. 카드는 표와 달리 상자가 스크롤이 된다. */
+  .cgroup > .cards.capped { max-height: 70vh; overflow-y: auto; }
+
+  /* --- 남극 지도 (EPSG:3031) --- */
+  /* 지도가 주인공이다. 범례는 필요한 만큼만 차지한다. */
+  .mapwrap { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .antmap { flex: 1 1 620px; width: 100%; max-width: 900px; height: auto; }
+  .antmap .ocean { fill: var(--panel); }
+  .antmap .land {
+    fill: var(--line); stroke: var(--dim); stroke-width: 4;
+    fill-rule: evenodd;   /* 빙붕 안쪽 구멍이 메워지지 않게 */
+  }
+  .antmap .grat circle, .antmap .grat line {
+    fill: none; stroke: var(--dim); stroke-width: 3; opacity: .32;
+  }
+  .antmap .grat .edge { stroke-width: 6; opacity: .55; }
+  .antmap .glabel text { fill: var(--dim); font-size: 115px; opacity: .75; }
+  /* 경도 이름은 테두리 바깥이라 겹칠 것이 없다 — 획을 두르지 않는다 */
+  .antmap .glabel .lonlab { font-size: 130px; opacity: .95; }
+  .antmap .sealabel text {
+    fill: var(--dim); font-size: 140px; text-anchor: middle; opacity: .85;
+  }
+  /* 마커 — 대략 위치는 옅은 원으로 범위를 함께 그린다 */
+  .antmap .site .halo { fill: var(--warn); opacity: .13; }
+  .antmap .site .dot {
+    fill: var(--accent); stroke: var(--bg); stroke-width: 22;
+  }
+  .antmap .site.approx .dot { fill: var(--warn); }
+  .antmap .site .tag {
+    fill: var(--fg); font-size: 150px; font-weight: 650; text-anchor: middle;
+    paint-order: stroke; stroke: var(--bg); stroke-width: 40;
+  }
+  .antmap .site .sub {
+    fill: var(--dim); font-size: 110px; text-anchor: middle;
+    paint-order: stroke; stroke: var(--bg); stroke-width: 40;
+  }
+  .antmap a:hover .dot { stroke: var(--accent); }
+  .antmap a { text-decoration: none; }
+
+  /* --- 로스해 확대 (EPSG:3031 · 180° 돌림) --- */
+  /* 전체·확대 두 SVG 가 한 자리를 번갈아 쓴다. 갈아타는 것은 `.mapstage` 의
+     클래스다 — `[hidden]` 은 `.antmap` 의 display 에 진다 (DiaRUGA 063). */
+  .mapstage { flex: 1 1 620px; max-width: 900px; min-width: 0; }
+  .mapstage .antmap { flex: none; display: block; }
+  .mapstage .rossmap { display: none; }
+  .mapstage.zoomRoss .rossmap { display: block; }
+  .mapstage.zoomRoss .antmap:not(.rossmap) { display: none; }
+  .mapzoom { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .mapzoom button {
+    font: inherit; font-size: 12.5px; padding: 3px 11px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--dim); cursor: pointer;
+  }
+  .mapzoom button.on { color: var(--fg); border-color: var(--accent); }
+  .mapzoom .outside { font-size: 11.5px; margin-left: 8px; }
+  .mapstage:not(.zoomRoss) .outside { display: none; }
+  /* 전체 지도 위의 확대 틀 — 누르면 확대로 간다 */
+  .antmap .zoomframe {
+    fill: var(--accent); fill-opacity: .04; stroke: var(--accent); stroke-width: 8;
+    stroke-dasharray: 40 30; opacity: .75; cursor: pointer;
+  }
+  .antmap .zoomframe:hover { fill-opacity: .12; opacity: 1; }
+  .antmap .sealabel .zoomlink { cursor: pointer; text-decoration: underline dotted; }
+  /* `.antmap` 을 함께 걸어 마커·판형을 그대로 쓴다. 단위는 같은 km 인데 viewBox
+     폭이 7600 → 1500 이라 글자·획을 약 1/5 (`ross.MARK`) 로 줄여야 같은 크기로
+     보인다. 마커는 SVG 쪽에서 scale() 로 처리한다. */
+  .rossmap .ocean { fill: var(--sea-0); }
+  .rossmap .bathy path, .rossmap .blegend rect { stroke: none; }
+  .rossmap .b0 { fill: var(--sea-0); }
+  .rossmap .b200 { fill: var(--sea-200); }
+  .rossmap .b1000 { fill: var(--sea-1000); }
+  .rossmap .b2000 { fill: var(--sea-2000); }
+  .rossmap .b3000 { fill: var(--sea-3000); }
+  .rossmap .b4000 { fill: var(--sea-4000); }
+  .rossmap .blegend .back { fill: var(--bg); opacity: .75; }
+  .rossmap .blegend text { fill: var(--dim); font-size: 19px; }
+  .rossmap .blegend .cap { font-size: 21px; }
+  .rossmap .land { stroke: none; }
+  .rossmap .shelf { fill: var(--bg); fill-opacity: .7; stroke: none; fill-rule: evenodd; }
+  .rossmap .shelfhatch { fill: url(#rosshatch); stroke: none; fill-rule: evenodd; }
+  .rossmap #rosshatch line { stroke: var(--dim); stroke-width: 1; opacity: .35; }
+  .rossmap .landline { fill: none; stroke: var(--dim); stroke-width: .9; }
+  .rossmap .shelfline { fill: none; stroke: var(--dim); stroke-width: .7; opacity: .7; }
+  .rossmap .grat circle, .rossmap .grat line { stroke-width: .7; }
+  .rossmap .glabel text { font-size: 23px; }
+  .rossmap .sealabel text { font-size: 28px; }
+  .rossmap .landmark rect { fill: var(--dim); }
+  .rossmap .landmark text { fill: var(--dim); font-size: 21px; paint-order: stroke; stroke: var(--bg); stroke-width: 6; }
+  /* 우리 기지 — 별과 강조색. 마커(`--accent` 원)와 갈리게 `--warn` 을 빌리지
+     않고 `--good` 을 쓴다: 주황은 이미 "대략 위치" 다 */
+  .rossmap .lm-ours .star { fill: var(--good); stroke: var(--bg); stroke-width: 3; }
+  .rossmap .lm-ours .hi { fill: var(--good); font-size: 27px; font-weight: 700; }
+  .rossmap .kscale line { stroke: var(--dim); stroke-width: 1.6; opacity: .9; }
+  .rossmap .kscale text { fill: var(--dim); font-size: 21px; }
+  /* 이름표 크기는 `ross.context()` 의 자리 계산과 같은 값이어야 한다 (DiaRUGA 150 × MARK) */
+  .rossmap .site .tag { font-size: 29.5px; stroke-width: 8; }
+  .rossmap .site .tag.a-start { text-anchor: start; }
+  .rossmap .site .tag.a-end { text-anchor: end; }
+
+  /* 트리는 짧은 줄뿐이라 넓을 이유가 없다. 남는 폭은 지도가 가져간다. */
+  .maplegend { flex: 0 1 270px; min-width: 230px; font-size: 12.5px; }
+  .maplegend .mapnote { color: var(--dim); font-size: 11.5px; margin-bottom: 10px; }
+  .maplegend .mapwarn {
+    padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; line-height: 1.55;
+    background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line);
+  }
+  /* 범례 트리 — 지역 > 코어 > 슬라이드 */
+  .maptree, .maptree ul { list-style: none; margin: 0; padding: 0; }
+  .maptree .msite { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .maptree .msite:last-child { border-bottom: 0; }
+  .maptree .mhead { display: flex; gap: 7px; align-items: baseline; flex-wrap: wrap; }
+  .maptree .mcore { margin: 5px 0 0 14px; }
+  .maptree .mcore > .mhead { font-size: 12px; }
+  /* 슬라이드 줄은 세로선으로 코어에 매단다 — 들여쓰기만으로는 묶임이 안 읽힌다 */
+  .maptree .mcore > ul {
+    margin: 3px 0 0 6px; padding-left: 11px; border-left: 1px solid var(--line);
+  }
+  .maptree .mslide {
+    display: flex; gap: 7px; align-items: baseline;
+    padding: 2px 0; font-size: 11.5px;
+  }
+  /* 깊이는 오른쪽 맞춤 — 세로로 자릿수가 맞아야 순서가 눈에 들어온다.
+     노두 시료는 여기서 `OC` 로 줄여 나오므로 이 폭에 들어간다. */
+  .maptree .mslide a {
+    font-variant-numeric: tabular-nums; text-align: right;
+    flex: 0 0 54px;
+  }
+  .maptree .mslide .vp { flex: 0 0 auto; }
+  /* 검토 표시는 남는 자리로 밀어 오른쪽에 세운다 */
+  .maptree .mslide .rev { margin-left: auto; white-space: nowrap; }
+  .maptree .mdone { color: var(--good); font-size: 11px; }
+  /* 보일 슬라이드 고르기 (DiaRUGA 203) — 끈 줄·지점·지역과 그 마커. 클래스로 감춘다:
+     `[hidden]` 은 `.maptree .mslide` 의 display 에 진다 (DiaRUGA 063). */
+  .maptree .msite.mhid, .maptree .mcore.mhid, .maptree .mslide.mhid { display: none; }
+  .antmap .sites a.mhid { display: none; }
+  /* 로스해 확대 상태에서는 나무도 틀 안의 것만 (DiaRUGA 203). `.mapstage` 와
+     `.maplegend` 는 `.mapwrap` 안의 형제라 `~` 로 닿는다. */
+  .mapstage.zoomRoss ~ .maplegend .maptree .msite.outross,
+  .mapstage.zoomRoss ~ .maplegend .maptree .mcore.outross,
+  .mapstage.zoomRoss ~ .maplegend .mapfilter .outross { display: none; }
+  .mapfilter {
+    border: 1px solid var(--line); border-radius: 6px; margin-bottom: 10px;
+    background: var(--panel); font-size: 12px;
+  }
+  .mapfilter summary { cursor: pointer; padding: 6px 10px; font-weight: 600; }
+  .mapfilter summary .n { color: var(--warn); font-weight: 600; margin-left: 6px; }
+  .mapfilter .body { padding: 2px 10px 8px; }
+  .mapfilter .fsite { margin-top: 6px; }
+  .mapfilter .fcore { margin: 2px 0 0 10px; }
+  .mapfilter .fcore .mono { margin-right: 4px; }
+  .mapfilter label {
+    display: inline-flex; align-items: baseline; gap: 3px; margin: 1px 8px 1px 0;
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  .mapfilter label input { margin: 0; vertical-align: middle; }
+  .mapfilter .act { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
+  .mapfilter .act button { font-size: 11.5px; padding: 2px 9px; }
+  .mdot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--accent); flex: 0 0 auto;
+  }
+  .mdot.approx { background: var(--warn); }
+  .card .cardstats2 {
+    border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px;
+  }
+  /* 첫째 줄이 여섯 칸이라(사진·시야·평균 장수·검출·시야당·검토) 기본 간격
+     18px 로는 자릿수가 큰 슬라이드에서 한 칸이 접혀 내려간다. 카드에서만
+     좁힌다 — 표는 이 규칙을 안 쓴다. */
+  .card .stat-row { gap: 13px; }
+  /* "검출 결과 없음" 은 이제 첫째 줄에서 숫자 칸들과 나란히 놓인다.
+     stat 은 두 줄(숫자 + 이름)이라 그냥 두면 글자가 위에 붙는다. */
+  .card .nodet { font-size: 12px; align-self: center; }
+  .card .dsnote { font-size: 11.5px; color: var(--dim); margin-top: 6px; }
+  .card .dsmeta {
+    font-size: 12px; color: var(--dim); display: flex; flex-wrap: wrap;
+    gap: 6px; align-items: center; margin: -4px 0 10px;
+  }
+  .card .dsmeta .mono { font-size: 11.5px; }
+  .card .dsmeta .dsedit { margin-left: auto; }
+  .card .dsdesc, .card .dswarn { max-width: none; margin-bottom: 10px; }
+
+  /* --- 데이터셋 목록 (index) --- */
+  .dslist { font-size: 13px; }
+  .dslist th, .dslist td { white-space: nowrap; vertical-align: top; }
+  /* 줄이 길어 눈이 옆으로 새기 쉽다. 짚고 있는 줄을 표시한다. */
+  .dslist tbody tr:hover { background: var(--panel); }
+  .dslist .dsname { text-align: left; font-weight: 600; }
+  .dslist .dscore { text-align: left; font-weight: 400; }
+  .dslist .dsname a { font-size: 14px; }
+  .dsstate { margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px;
+             background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); }
+  /* 설명·경고는 이름 칸 아래로 흘린다. 줄바꿈이 되어야 하므로 nowrap 을 푼다. */
+  .dsdesc, .dswarn { font-weight: 400; white-space: normal; max-width: 34ch;
+                     font-size: 11.5px; line-height: 1.5; margin-top: 3px; }
+  .dsdesc { color: var(--dim); }
+  .dswarn { color: var(--warn-fg); }
+  .dslist .nodet { text-align: center; font-size: 11.5px; }
+  /* 검출이 일부 시야에만 돌았을 때. 숫자를 지우지 않고 단서만 붙인다. */
+  .dslist .partial { color: var(--warn-fg); }
+  .dslist .revcol { min-width: 78px; }
+  .revnum { font-variant-numeric: tabular-nums; }
+  .dslist .bar { margin-top: 4px; }
+  .dsedit { font-size: 11.5px; }
+  .dslist tfoot td { border-bottom: 0; border-top: 2px solid var(--line);
+                     font-weight: 650; color: var(--dim); }
+
+  /* --- 코어 화면 (/core/<지역>/<코어>/) ---
+     깊이 축이 주인공이다. 왼쪽이 로그(깊이·암상·시료), 오른쪽이 현황과 속성.
+     좁아지면 로그가 위로 가고 속성이 아래로 흐른다. */
+  .corepage { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .corelog { flex: 1 1 460px; min-width: 320px; }
+  .coreside { flex: 1 1 380px; min-width: 300px; display: grid; gap: 12px; }
+  .coreside .card h3 {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+  }
+  .coreside .card h3 .dsedit { margin-left: auto; }
+  .coreside .ro {
+    display: grid; grid-template-columns: auto 1fr; gap: 5px 14px;
+    font-size: 12px;
+  }
+  .coreside .ro > span:nth-child(odd) { color: var(--dim); white-space: nowrap; }
+  .ctab { font-size: 12.5px; }
+  .ctab th, .ctab td { padding: 5px 8px; white-space: nowrap; }
+  .ctab .dsname { text-align: left; }
+  .ctab tfoot td { border-bottom: 0; border-top: 2px solid var(--line);
+                   font-weight: 650; color: var(--dim); }
+
+  .note {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: 6px;
+    padding: 10px 14px; margin: 14px 0; font-size: 13px;
+  }
+
+  @media (max-width: 820px) {
+    header { padding: 8px 10px; gap: 8px; }
+    /* **머리줄을 화면에 붙여 두지 않는다.** 폰에서는 세 줄로 접혀 화면의
+       3분의 1을 먹는데, 붙어 있으면 사진이 그만큼 밀린다 — 사진이 주인공인
+       화면에서 늘 보일 것은 사진이다. */
+    header { position: static; }
+    header .sub { font-size: 12px; }
+    header nav { margin-left: 0; width: 100%; gap: 10px; flex-wrap: wrap; }
+    main { padding: 5px 9px 18px; }
+    /* 사진 옆의 칸을 아래로 내린다 — 옆에 두면 사진이 반이 된다 */
+    .detrow { flex-direction: column; }
+    .notes { flex: 0 0 auto; width: auto; max-height: none; }
+    /* 손가락 표적. **감추지 않고 키운다** — 검토에 쓰는 단추들이다 */
+    .detview .tools button, .striprow .navbtn,
+    .dettabs button { padding: 8px 12px; font-size: 13px; }
+    /* **도구를 사진 위에서 내린다.** 단추를 손가락 크기로 키우면 두 줄이 되어
+       사진의 3분의 1을 덮는다 — 사진이 주인공인 화면이다. 데스크탑에서 위에
+       얹는 이유(마우스가 곧바로 닿는다)는 손가락에서 성립하지 않는다.
+       **사진 위로 올린다**(`order: -1`) — 아래로 두면 바닥에 붙은 표시들
+       (배율·검토 완료·스케일바)이 그 위에 겹친다. */
+    .detview { display: flex; flex-direction: column; }
+    .detview .tools, .detview .layers {
+      position: static; order: -1; max-width: none; padding: 5px 6px;
+      line-height: 1.2; align-self: flex-start;
+    }
+    .detview .layers { order: -2; }
+    .dettabs { flex-wrap: wrap; }
+    .dettabs .tabmeta { margin-left: 0; width: 100%; padding-bottom: 0; }
+    /* 카드가 두 열이면 폰에서 그림도 글자도 못 읽는다 */
+    .cat { grid-template-columns: 1fr; }
+    .catcard { grid-template-columns: 120px 1fr; }
+    .offbody .orow .k { width: auto; }
+
+    /* --- 판 캐러셀 (DiaRUGA 194 · 사용자: "시야 섬네일이 너무 커") ---
+       128px 은 데스크탑에서 네댓 장이 한눈에 드는 값이다. 폰에서는 두 장 반이
+       들면서 세로로 140px 을 먹는데, **초점을 고르는 데는 이만큼이면 된다** —
+       판을 자세히 보는 것은 골라서 큰 사진으로 하는 일이다. */
+    .strip .shot { width: 84px; }
+    .strip .shot .cap { padding: 3px 6px 1px; font-size: 10px; }
+    .strip .shot .bar { margin: auto 6px 6px; }
+
+    /* 화면 조정은 접힌 채로 시작한다(`_detview_js.html`). 접힌 줄이 손끝에
+       걸려야 다시 펼 수 있다 */
+    .notes .adjbox > summary { padding: 8px 0; }
+
+    /* --- 오프라인 프로그램 (DiaRUGA 194) ---
+       시야 목록은 **한 줄로 굴린다** — 60개가 격자로 서면 화면의 절반을 먹는다.
+       단추는 손끝 크기로 키운다(DiaRUGA 192 가 도구 줄에 한 것과 같은 줄).
+       **가로로 미는 것은 이 상자 안이다** — 페이지가 밀리면 안 된다. */
+    .vplist { flex-wrap: nowrap; overflow-x: auto; gap: 6px;
+              padding-bottom: 4px; scrollbar-width: thin; }
+    .vplist button { flex: 0 0 auto; font-size: 13px; padding: 9px 12px; }
+    .offdone { flex-direction: column; align-items: stretch; }
+    .offdone .who { width: 100%; }
+    .offdone button.get { padding: 13px 18px; }
+  }
   {% block style %}{% endblock %}
 </style>
 <script>
@@ -196,6 +800,16 @@
     <svg class="ic-light" viewBox="-12 -12 24 24" aria-hidden="true"><circle r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M0 -10V-7.5M0 7.5V10M-10 0H-7.5M7.5 0H10M-7.1 -7.1L-5.3 -5.3M5.3 5.3L7.1 7.1M-7.1 7.1L-5.3 5.3M5.3 -5.3L7.1 -7.1"/></g></svg>
     <svg class="ic-dark" viewBox="-12 -12 24 24" aria-hidden="true"><path d="M3 -9.5A8.5 8.5 0 1 0 9.5 3A7 7 0 0 1 3 -9.5Z" fill="currentColor"/></svg>
   </button>
+  {% comment %}
+    시스템 설정은 데이터셋 목록과 같은 층의 최상위 메뉴다 — 머리줄 오른쪽 끝 톱니로
+    **모든 화면에서 같은 자리**에 있다 (DiaRUGA 방침). 도감(Atlas) 단추는 5단계에서
+    이 왼쪽에 온다.
+  {% endcomment %}
+  <a class="gearlink" href="{% url 'system_settings' %}" title="시스템 설정" aria-label="시스템 설정">
+    <svg viewBox="-13 -13 26 26" fill="currentColor" fill-rule="evenodd" aria-hidden="true">
+      <path d="M-2.18 -11.19 L2.18 -11.19 L2.12 -7.92 L4.1 -7.1 L6.37 -9.45 L9.45 -6.37 L7.1 -4.1 L7.92 -2.12 L11.19 -2.18 L11.19 2.18 L7.92 2.12 L7.1 4.1 L9.45 6.37 L6.37 9.45 L4.1 7.1 L2.12 7.92 L2.18 11.19 L-2.18 11.19 L-2.12 7.92 L-4.1 7.1 L-6.37 9.45 L-9.45 6.37 L-7.1 4.1 L-7.92 2.12 L-11.19 2.18 L-11.19 -2.18 L-7.92 -2.12 L-7.1 -4.1 L-9.45 -6.37 L-6.37 -9.45 L-4.1 -7.1 L-2.12 -7.92 Z M0 -3.9 A3.9 3.9 0 1 0 0 3.9 A3.9 3.9 0 1 0 0 -3.9 Z"/>
+    </svg>
+  </a>
 </header>
 <main>{% block content %}{% endblock %}</main>
 <script>

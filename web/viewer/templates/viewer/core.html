@@ -1,0 +1,63 @@
+{% extends "viewer/base.html" %}
+{% block title %}{{ title }} — ForGIA{% endblock %}
+{% block subtitle %}<a href="{% url 'index' %}">데이터셋</a> / <b>{{ title }}</b>{% endblock %}
+{% comment %}
+  지점 하나 — 깊이 방향으로 본 시료·관찰. DiaRUGA `core.html`(637줄)은 코어 자료
+  곡선(P17)·깊이 로그·노두 사진까지 있는데, 그 셋은 5단계 / 안 온다. 여기는
+  **지점 정보 카드 + 깊이순 시료·관찰 표**다. 속성은 `/d/<slug>/edit/` 에서 고친다.
+{% endcomment %}
+{% block style %}
+  .corepage { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .coreside .card { padding: 13px 15px; }
+  .coreside .card h3 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; align-items: baseline; }
+  .coreside .ro { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; color: var(--dim); }
+  .coreside .ro > span:nth-child(even) { color: var(--fg); }
+  @media (max-width: 820px) { .corepage { grid-template-columns: 1fr; } }
+{% endblock %}
+{% block content %}
+<div class="corepage">
+  <aside class="coreside">
+    <div class="card">
+      <h3>{{ title }}</h3>
+      <div class="ro">
+        <span>지역</span><span>{{ site.region|default:site.name|default:site.code }} <span class="dim mono">{{ site.code }}</span></span>
+        <span>채취 방식</span><span>{{ loc.collect_kind|default:"—" }}</span>
+        <span>좌표</span><span>{% if loc.lat is not None and loc.lon is not None %}{{ loc.lat|floatformat:4 }}, {{ loc.lon|floatformat:4 }}{% else %}<span class="dim">—</span>{% endif %}</span>
+        <span>수심</span><span>{% if loc.water_depth_m is not None %}{{ loc.water_depth_m|floatformat:0 }} m{% else %}<span class="dim">—</span>{% endif %}</span>
+        <span>채취일</span><span>{% if loc.collected_at %}{{ loc.collected_at|date:"Y-m-d" }}{% else %}<span class="dim">—</span>{% endif %}</span>
+        {% if loc.kpdc_id %}<span>KPDC</span><span><a href="{{ loc.kpdc_url }}" target="_blank" rel="noopener">{{ loc.kpdc_id }}</a>{% with m=loc.kpdc_meta %}{% if m %}<span class="dim"> · {{ m.title }}{% if m.core_length_m %} · 길이 {{ m.core_length_m }} m{% endif %}{% if loc.kpdc_files_note %} · {{ loc.kpdc_files_note }}{% endif %}</span>{% endif %}{% endwith %}</span>{% endif %}
+        <span>시료 / 관찰</span><span>{{ n_samples }} / {{ n_slides }}</span>
+      </div>
+      {% if loc.note %}<p class="dim" style="font-size:12px;margin:10px 0 0">{{ loc.note }}</p>{% endif %}
+    </div>
+  </aside>
+  <div>
+    <table class="dslist ctab">
+      <thead><tr><th>깊이</th><th>시료</th><th>건시료 <span class="unit">(g)</span></th><th>관찰</th><th>분획 · 분할</th><th><span class="unit">µm/px</span></th><th>사진</th><th>시야</th><th>합성</th><th>상태</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr class="{% if r.hidden %}rowhidden{% endif %}">
+          <td>{% include "viewer/_depth.html" with depth_cm=r.depth_cm dash=1 only %}</td>
+          <td class="mono">{{ r.sample_code }}</td>
+          <td>{% if r.dry_weight_g is not None %}{{ r.dry_weight_g|floatformat:"-2" }}{% else %}<span class="dim">—</span>{% endif %}</td>
+          {% if r.slug %}
+          <td class="dsname"><a href="{% url 'dataset' r.slug %}">{{ r.label }}</a>{% include "viewer/_obs.html" with d=r only %}</td>
+          <td>{% if r.fraction_badge %}<span class="badge frac">{{ r.fraction_badge }}</span>{% endif %}{% if r.split_denom %}<span class="badge">1/{{ r.split_denom }}</span>{% endif %}</td>
+          <td class="mono">{% if r.um_per_pixel %}{{ r.um_per_pixel|floatformat:4 }}{% else %}<span class="dim">—</span>{% endif %}</td>
+          <td>{{ r.n_images }}</td><td>{{ r.n_groups }}</td><td>{{ r.n_stacks }}</td>
+          <td>{% if r.state != "done" %}<span class="dsstate">{{ r.state }}</span>{% endif %}</td>
+          <td><a class="dsedit" href="{% url 'dataset_edit' r.slug %}">정보 편집</a></td>
+          {% else %}
+          <td class="dim" colspan="8">관찰 없음</td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr><td colspan="11" class="dim">이 지점에는 아직 시료가 없다.</td></tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr><td colspan="6" class="dsname">합계</td><td>{{ totals.n_images }}</td><td>{{ totals.n_groups }}</td><td>{{ totals.n_stacks }}</td><td colspan="2"></td></tr></tfoot>
+    </table>
+    {% if n_hidden %}<p class="dim" style="font-size:12px">숨긴 관찰 {{ n_hidden }}장 — <a href="?hidden=1">함께 보기</a></p>{% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_map_legend.html` 에서 왔다 — 한국 갈래를 뺐고 검토 열은 3단계에서 온다.
+{% endcomment %}
+{% comment %}
+  지도 옆 범례와 지역 → 코어 → 슬라이드 목록. 권역과 무관하게 같다.
+
+  **바깥의 mapwrap 은 여기서 닫지 않는다.** `_map.html` 이 연 것은
+  `_map.html` 이 닫는다 — 원래 한 파일이던 것을 가르면서 닫는 </div> 가
+  양쪽에 남아 .dsview 가 일찍 닫혔고, 카드 판이 그 바깥으로 밀려나
+  표 아래에 늘 함께 보였다.
+{% endcomment %}
+  <div class="maplegend">
+    <div class="mapnote">
+        <b>EPSG:3031</b> · 남극점 중심 극구면투영 · 해안선 Natural Earth 1:50m
+        (로스해 확대는 1:10m · 빙붕은 빗금)
+    </div>
+    {% if antmap.any_approx %}
+{% comment %}
+      한 줄이면 된다. 나머지는 마커에 마우스를 올리면 나오고, 옅은 원과 주황
+      마커가 이미 "이건 실측이 아니다" 를 말한다.
+    {% endcomment %}
+    <div class="mapwarn"><b>표시된 위치는 대략값입니다.</b></div>
+    {% endif %}
+{% comment %}
+      보일 슬라이드 고르기 (DiaRUGA 203). **이 브라우저에서만** 감춘다 — 체크를 끄면
+      나무·마커에서 사라지고 `localStorage`(`forgia.maphide`)에 남는다.
+      서버에는 아무것도 안 쓴다: 슬라이드 속성의 「숨김」(`hide_in_list`)은
+      모든 사람의 목록·합계에 걸리는 자료의 성질이고, 이것은 지도를 보는
+      사람 하나의 보기 상태다(DiaRUGA 사용자 결정 2026-09-17).
+
+      나무와 같은 나열을 한 번 더 적는다 — 나무 안에 체크박스를 섞으면 고르는
+      중과 보는 중이 한 화면에 겹쳐, 끈 것이 보이는지 안 보이는지가 흔들린다.
+    {% endcomment %}
+    <details class="mapfilter" id="mapfilter">
+      <summary>보일 슬라이드 고르기<span class="n" id="mapfilter-n"></span></summary>
+      <div class="body">
+        {% for p in antmap.points %}
+          <div class="fsite{% if p.ross_out %} outross{% endif %}"><b>{{ p.code }}</b>
+            {% for c in p.cores %}
+              <div class="fcore{% if c.ross_out %} outross{% endif %}"><span class="mono">{{ c.code }}</span>
+                {% for sl in c.slides %}
+                  <label><input type="checkbox" data-slug="{{ sl.slug }}" checked>
+                    {% include "viewer/_depth.html" with depth_cm=sl.depth_cm dash=1 short=1 only %}{% if sl.obs_badge %} <span class="dim">{{ sl.obs_badge }}</span>{% endif %}</label>
+                {% endfor %}
+              </div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+        <div class="act"><button type="button" id="mapfilter-all">모두 보이기</button>
+          <span class="dim">이 브라우저에서만 감춥니다.</span></div>
+      </div>
+    </details>
+{% comment %}
+      지역 → 코어 → 슬라이드. 깊이순이다 — 같은 코어에서 깊이에 따른 변화를
+      보는 것이 이 시료의 목적이라 그 순서로 읽혀야 한다.
+
+      `data-site`·`data-core`·`data-slug` 는 위 고르기와 로스해 확대가 줄을
+      찾는 열쇠다. `outross` 는 로스해 틀 밖의 지점 — 확대 상태에서는 CSS 가
+      감춘다(`.mapstage.zoomRoss ~ .maplegend`). 마커와 같은 판정이다
+      (`views._map_ctx`).
+    {% endcomment %}
+    <ul class="maptree">
+    {% for p in antmap.points %}
+      <li class="msite{% if p.ross_out %} outross{% endif %}" data-site="{{ p.code }}">
+        <div class="mhead">
+          <span class="mdot{% if not p.exact %} approx{% endif %}"></span>
+          <b>{{ p.code }}</b>
+          <span class="dim">{{ p.label }}{% if not p.exact %} · {{ p.approx_note }}{% endif %}</span>
+        </div>
+        <ul>
+        {% for c in p.cores %}
+          <li class="mcore{% if c.ross_out %} outross{% endif %}" data-core="{{ p.code }}-{{ c.code }}">
+            <div class="mhead"><span class="mono">{{ c.code }}</span>
+              <span class="dim">슬라이드 <span class="nsl">{{ c.n_slides }}</span>장</span></div>
+            <ul>
+            {% for sl in c.slides %}
+              {% comment %}
+                여기는 이름이 아니라 깊이만 적는 자리다 — 같은 깊이의 관찰 둘이
+                **글자 그대로 같아 보인다.** 배지가 그것을 가른다.
+              {% endcomment %}
+              <li class="mslide{% if sl.hidden %} rowhidden{% endif %}" data-slug="{{ sl.slug }}" data-vp="{{ sl.n_viewpoints }}">
+                <a href="{% url 'dataset' sl.slug %}">
+                  {% include "viewer/_depth.html" with depth_cm=sl.depth_cm dash=1 short=1 only %}
+                </a>
+                {% include "viewer/_obs.html" with d=sl only %}
+                <span class="dim vp">시야 {{ sl.n_viewpoints }}{% if sl.excluded %}<span class="exmark">*</span>{% endif %}</span>
+                {% if sl.fraction_badge %}<span class="dim">{{ sl.fraction_badge }}</span>{% endif %}
+                {% if sl.state != "done" %}<span class="dsstate rev">{{ sl.state }}</span>{% endif %}
+              </li>
+            {% endfor %}
+            </ul>
+          </li>
+        {% endfor %}
+        </ul>
+      </li>
+    {% endfor %}
+    </ul>
+  </div>

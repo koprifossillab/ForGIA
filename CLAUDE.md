@@ -138,7 +138,8 @@ deploy/host/dbrun.sh  check_db.py       # 컨테이너 안에서 돈다
 deploy/host/dbrun.sh  backup_db.py --note before-refilter   # 큰 작업 전에는 반드시
 ```
 
-`ops/` 는 1단계에서 온다 — 지금은 문만 있다.
+`ops/check_db.py` 는 **반입·그룹핑·합성 뒤, 시야를 가르거나 소속을 옮긴 뒤**
+돌린다 — 지금은 5번(뼈대)·7번(층·격자 칸·분획)만 있다.
 
 ### 저장소 소스를 그대로 사내망에 띄운다 (Django 개발 서버)
 
@@ -177,7 +178,7 @@ echo "http://172.16.116.98:$PORT/"
 **자동 시험이 있다 — 고치고 나면 이것부터 돌린다.**
 
 ```bash
-python web/manage.py test viewer --exclude-tag browser   # 0단계: 11개
+python web/manage.py test viewer --exclude-tag browser   # 1단계: 101개 · 1.2초
 python web/manage.py test viewer                         # 브라우저 포함 (아직 없다)
 ```
 
@@ -223,14 +224,25 @@ pipeline/  scan_nas → ingest_nas → group_focus_series → focus_stack → se
 스크립트끼리의 임포트도 평평해야 돈다.
 
 ```
+pipeline/
+  scale.py       **µm/px 를 어디서 읽나 — 여기 하나뿐이다.** scale.toml(override) → Leica(아직) → EXIF → scale.toml → 사이드카 → 기본값
+  scan_nas.py · ingest_nas.py · group_focus_series.py · focus_stack.py   반입 넷 (DiaRUGA 그대로 · 칸 번호·분획만 더함)
+  runlog.py · schema_guard.py
 web/viewer/
-  models.py      0단계: 층 넷. 단계마다 늘어난다 — 읽기 전에 파일 첫 주석부터
-  naming.py      폴더 이름 → 층. **규칙은 여기 하나뿐이다**
-  views.py       0단계: 목록 · /healthz
-  context.py     판 번호 · 자리 이름 워터마크
-  templates/viewer/base.html   테마 토큰(연보라) · 머리줄 · 워터마크 · 테마 단추
-  templates/viewer/_logo.html  부유성 마크 · _logo_benthic.html 저서성 사슬
+  models.py      층 넷 + RunBatch·Run·Viewpoint(cell)·Frame·Stack·Image. 읽기 전에 파일 첫 주석부터
+  naming.py      폴더 이름 → 층. **규칙은 여기 하나뿐이다** (분획 토막 `>125um` 포함)
+  data.py        DB → 뷰가 쓰는 dict. **읽기 전용.** 검출 값은 2단계까지 0 자리
+  manage_data.py 시스템 설정이 쓰는 문 — 층을 만들고 옮기고 지운다 (쓰는 쪽)
+  views.py       목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 시스템 설정 · /img · /healthz
+  images.py      Image 행을 만드는 문 하나
+  antarctica.py · ross.py   미리 구운 해안선 (DiaRUGA 그대로)
+  templates/viewer/base.html   테마 토큰(연보라) · 머리줄(톱니) · 워터마크 · 화면 공통 CSS
+  templates/viewer/group.html  **1단계용 사진 화면** — 3단계 검토 화면이 통째로 갈아 끼운다
   tests/base.py  모든 시험의 바닥 — 운영 자료에 닿지 않는가를 확인한다
+  tests/factories.py  make_world() 가 DiaRUGA 와 같은 꼴 — 그쪽 시험을 옮겨 올 때 그대로 돈다
+ops/
+  check_db.py    5번(뼈대)·7번(층). 번호는 DiaRUGA 와 맞춘다
+  backup_db.py · db_sentinel.py · sync_backup_nas.py · fetch_kpdc.py · pending_slides.py
 ```
 
 **테마는 `data-theme` 속성이 정한다** (DiaRUGA 201). 색 토큰을 더할 때는
@@ -243,7 +255,15 @@ web/viewer/
 DiaRUGA devlog 번호다. 같은 Django·SQLite·WAL·Docker·템플릿이라 그대로 걸린다 —
 아직 이 저장소에 없는 화면(교정·검토)의 것도 그 화면이 오면 그대로 해당한다.
 
-여기 있는 것은 **전부 실제로 한 번씩 당한 것들이다.**
+**ForGIA 에서 더한 것**
+
+- **`pk` 는 저장한 뒤에야 있다** (001). 새로 만든 행과 붙일지를 `slide.sample_id !=
+  sample.pk` 로 저장 **전에** 견주면 `None != None` 이라 안 붙는다 — "새로 만들어
+  붙였습니다" 만 뜬 채 관찰은 소속 없이 남았다. 비교는 `save()` 뒤에. DiaRUGA
+  `views.py:741` 에 같은 줄이 있다
+- **합성 사진의 저주파 지문은 서로 닮는다** (001). 빈 바탕에 개체 하나뿐이라
+  다른 시야가 0.61 로 묶였다. 그룹핑 임계값·지문은 **실사진으로** 잡는다 — 합성
+  자료로 맞춘 값을 믿지 말 것
 
 **교정**
 

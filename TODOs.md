@@ -1,16 +1,12 @@
 # TODOs
 
-## 1단계 — 층·반입 (다음)
+## 1단계에서 남은 것
 
-- `Viewpoint`(`cell` 포함)·`Frame`·`Stack`·`Image` 모델 — DiaRUGA `models.py` 461~643
-- `pipeline/scan_nas.py`·`ingest_nas.py`·`group_focus_series.py`·`focus_stack.py`·`runlog.py`·`schema_guard.py`·`batch_*.py` — 그대로 옮긴다
-- **`pipeline/scale.py` 새로** — 폴더 `scale.toml` → EXIF `ImageDescription` 순. Leica XML 갈래는 실사진이 온 뒤. 합성 자료의 EXIF 로 시험한다
-- `ops/backup_db.py`·`db_sentinel.py`·`check_db.py`·`export_review.py`·`sync_backup_nas.py`·`fetch_kpdc.py`
-- `/healthz` 에 무결성 깃발(`db_sentinel`) 붙이기
-- 뷰어: 시야 목록 `/d/<slug>/` · 지점 `/loc/…` · 남극 지도(`antarctica.py`·`ross.py`) · 시스템 설정(자료) — `data.py`·`manage_data.py` 를 그때 가져온다
-- `deploy/poll_nas.sh` — 단계 이름·인자를 ForGIA 것으로
-- `testdeploy.sh` 로 시험 배포를 한 번 띄워 본다 — `deploy/` 는 아직 한 번도 안 돌렸다
+- **시험 배포** — `sudo mkdir /srv/ForGIA` 뒤 `deploy/host/testdeploy.sh`. `deploy/` 는 아직 한 번도 안 돌았다
+- **그룹핑 지문에서 조명 기울기 빼기** — 합성 사진에서 다른 시야가 0.61 로 묶였다(001). 실사진이 오면 임계값과 함께 본다
+- `scale.py` ⑴ Leica XML — 실사진 + 메타 한 벌이 오면
 - 브라우저 시험 겹(`tests/browser/`) 바닥
+- `ops/export_review.py` — 3단계(교정 테이블)와 함께
 
 ## 2단계 — 검출
 
@@ -40,4 +36,4 @@
 - GitHub 저장소 이름 `Forgia` → `ForGIA` (admin) · 로컬 원격 갱신
 - Docker Hub 시크릿(`DOCKERHUB_USERNAME`·`DOCKERHUB_TOKEN`)을 저장소에
 - nginx `include snippets/ForGIA-subpath.conf` (sudo)
-- Leica LAS X 실사진 + 메타 한 벌이 오면 `scale.py` ⑴ 갈래
+- **DiaRUGA `views.py:741` 의 `attached` 버그를 저쪽에 알린다** (001)

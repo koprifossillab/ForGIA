@@ -1,74 +1,437 @@
-"""뷰. DiaRUGA v0.29.0 `web/viewer/views.py`(3,120줄)에서 0단계에 필요한 둘만
-가져왔다 — 목록과 `/healthz`. 나머지 화면은 단계마다 온다 (P01 4절).
-
-`data.py`(DB → 뷰가 쓰는 dict, 읽기 전용) 도 아직 없다. 목록 하나에 그 층을
-두는 것은 과해서 여기서 바로 질의한다 — 1단계에서 시야가 붙으면 그때 `data.py`
-를 가져오고 이 뷰도 그리로 옮긴다.
+"""뷰. DiaRUGA v0.29.0 `web/viewer/views.py`(3,120줄)에서 1단계 화면만 왔다 —
+목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 시스템 설정(자료·파이프라인) ·
+`/img` · `/healthz`. 나머지 화면은 단계마다 온다 (P01 4절).
 """
+import hashlib
 import os
+import sys
 import time
+from datetime import date
+from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count
-from django.http import JsonResponse
-from django.shortcuts import render
+from django.db import IntegrityError, transaction
+from django.http import FileResponse, Http404, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
 
-from .models import Locality, Sample, Site, Slide
+from . import antarctica, data, manage_data, ross
+from .models import (Frame, Locality, Sample, Site, Slide, Stack,
+                     Viewpoint)
 
-# `/healthz` 가 세는 테이블. 단계마다 늘어난다 — 1단계에서 `viewpoint`,
-# 2단계에서 `detection`, 3단계에서 `objectreview`.
+# **뷰어가 저장소의 `ops/db_sentinel.py` 를 쓴다** — `/healthz` 가 무결성 깃발을
+# 읽는다. 저장소 뿌리는 `web/viewer` 의 두 단계 위다. **컨테이너 안에서도 같다** —
+# 이미지가 저장소를 통째로 `/app` 에 담으므로 `/app/ops` 다. (DiaRUGA 100)
+_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "ops"))
+import db_sentinel  # noqa: E402
+
+# `/healthz` 가 세는 테이블. 단계마다 늘어난다.
 HEALTH_TABLES = [("site", Site), ("locality", Locality),
-                 ("sample", Sample), ("slide", Slide)]
+                 ("sample", Sample), ("slide", Slide),
+                 ("viewpoint", Viewpoint), ("frame", Frame), ("stack", Stack)]
 
 
+def _with_hidden(request) -> bool:
+    """숨긴 슬라이드를 보이는가. `?hidden=1`. **화면이 아니라 서버가 거른다** —
+    표·카드·지도가 같은 목록을 봐야 한다. 합계는 이 값을 안 본다."""
+    return request.GET.get("hidden") == "1"
+
+
+def _num(raw, cast=float):
+    """빈 칸은 None 으로. 잘못된 값은 예외를 올려 보낸다 — 조용히 0 이 되면 안 된다."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    return cast(raw)
+
+
+# --- 목록 --------------------------------------------------------------------
 def index(request):
-    """데이터셋 목록 — 지역 → 지점 → 시료 → 관찰.
-
-    DiaRUGA 의 목록은 권역 탭·표/카드/지도 전환·검토 진행률까지 든 552줄 템플릿인데
-    (`index.html`), 0단계에는 층만 있다. 그 화면은 1단계에서 시야와 함께 온다.
-
-    **소속을 잃은 관찰을 따로 센다.** `Slide.sample` 이 `SET_NULL` 이라 시료를
-    지우면 관찰이 조용히 소속을 잃고, 층으로 내려가는 목록에는 안 나온다 —
-    500 도 404 도 아니라 그냥 사라진다 (DiaRUGA 063). 화면이 그 수를 적는다.
-    """
-    sites = (Site.objects
-             .prefetch_related("localities__samples__slides")
-             .annotate(n_slides=Count("localities__samples__slides",
-                                      distinct=True)))
-    orphans = Slide.objects.filter(sample__isnull=True).count()
+    area = data.area_tabs(request.GET.get("area"))
+    with_hidden = _with_hidden(request)
+    rows = data.datasets(area["selected"])
+    shown = [r for r in rows if with_hidden or not r["hidden"]]
+    # **"전체" 에는 지도가 없다** — 권역이 늘면 투영이 섞이므로 DiaRUGA 와 같은
+    # 규칙을 처음부터 둔다. 지금은 남극 하나라 `전체` 만 지도가 없다.
+    show_map = not area["is_all"]
     return render(request, "viewer/index.html", {
-        "sites": sites,
-        "n_slides": Slide.objects.count(),
-        "orphans": orphans,
+        "datasets": shown,
+        "groups": data.datasets_by_locality(rows, with_hidden),
+        "area": area,
+        "show_map": show_map,
+        "totals": data.datasets_total(rows),
+        "with_hidden": with_hidden,
+        "n_hidden": sum(1 for r in rows if r["hidden"]),
+        "antmap": (_map_ctx(data.map_points(area["selected"], with_hidden))
+                   if show_map else None),
     })
 
 
+def _map_ctx(pts: list) -> dict:
+    """남극 지도 상수. 로스해 확대 상태에서 오른쪽 나무가 틀 안의 것만 내도록
+    (DiaRUGA 203) 지점·지역에 틀 밖 표시를 적는다 — 판정은 `ross.in_frame` 하나다."""
+    for q in pts:
+        for c in q["cores"]:
+            c["ross_out"] = not ross.in_frame(c["x"], c["y"])
+        q["ross_out"] = all(c["ross_out"] for c in q["cores"]) if q["cores"] else True
+    return {
+        "points": pts, "any_approx": any(not q["exact"] for q in pts),
+        "kind": "ant",
+        "land": antarctica.LAND,
+        "boundary": antarctica.BOUNDARY_KM,
+        "lat_circles": antarctica.LAT_CIRCLES,
+        "boundary_label": antarctica.BOUNDARY_LABEL,
+        "lon_labels": antarctica.LON_LABELS,
+        "lon_spokes": antarctica.LON_SPOKES,
+        "sea_labels": antarctica.SEA_LABELS,
+        "ross": ross.context(pts),
+    }
+
+
+# --- 시야 목록 · 시야 --------------------------------------------------------
+def dataset(request, slug):
+    ctx = data.dataset_detail(slug)
+    if ctx is None:
+        raise Http404(f"unknown dataset: {slug}")
+    return render(request, "viewer/dataset.html", ctx)
+
+
+def group(request, slug, gid):
+    """시야 하나의 사진. **1단계 화면이다** — 검토 화면(DiaRUGA `group.html`)은
+    3단계에서 이 주소를 그대로 물려받는다."""
+    ctx = data.group_photos(slug, gid)
+    if ctx is None:
+        raise Http404(f"unknown viewpoint: {slug}/g{gid}")
+    return render(request, "viewer/group.html", ctx)
+
+
+# --- 지점 --------------------------------------------------------------------
+def core_page(request, site_code, core_code):
+    """지점 하나 — 깊이 방향으로 본 화면. 속성은 여기서 안 고친다 (`/d/<slug>/edit/`)."""
+    with_hidden = _with_hidden(request)
+    ctx = data.locality_detail(site_code, core_code, with_hidden)
+    if ctx is None:
+        raise Http404(f"unknown locality: {site_code}/{core_code}")
+    return render(request, "viewer/core.html", {**ctx, "with_hidden": with_hidden})
+
+
+def core_redirect(request, site_code, core_code):
+    """옛 `/core/…` 주소를 `/loc/…` 로 (DiaRUGA 와 같은 주소 모양). 302 다."""
+    return redirect("core", site_code=site_code, core_code=core_code)
+
+
+# --- 정보 편집 -----------------------------------------------------------------
+def dataset_edit(request, slug):
+    """관찰·시료·지점·지역의 속성을 사람이 채우는 화면. 층 넷을 한 폼으로 낸다.
+    DiaRUGA `dataset_edit` 에서 노두 갈래를 빼고 분획·분할·칸 수·건시료 무게를 더했다.
+
+    **위 세 층은 여러 관찰이 공유한다.** 몇 개가 함께 바뀌는지 미리 알린다.
+    **소속이 없으면 붙이거나 만든다** — 지역이 없는 관찰은 어느 권역 탭에도 안 나온다.
+    """
+    slide = (Slide.objects.filter(slug=slug)
+             .select_related("sample__locality__site").first())
+    if slide is None:
+        raise Http404(f"unknown dataset: {slug}")
+    sample = slide.sample
+    loc = sample.locality if sample else None
+    site = loc.site if loc else None
+
+    # 이 관찰이 처음부터 들고 있던 소속인가. **폼의 시료·지점·지역 칸을 저장에
+    # 쓸지 말지가 여기서 갈린다** — 소속이 없던 관찰의 탭은 빈 칸이고, 그 빈
+    # 칸을 남의 행에 그대로 쓰면 이미 채워 둔 좌표·수심이 지워진다 (DiaRUGA 063).
+    had = {"sample": sample is not None, "loc": loc is not None,
+           "site": site is not None}
+
+    errors, saved, messages_made = [], False, ""
+    if request.method == "POST":
+        p = request.POST
+        made = {"sample": False, "loc": False, "site": False}
+
+        # 1) 이미 있는 시료에 그대로 붙이는 길
+        attach = (p.get("attach_sample") or "").strip()
+        if sample is None and attach:
+            sample = (Sample.objects.select_related("locality__site")
+                      .filter(pk=attach).first())
+            if sample is None:
+                errors.append("고른 시료를 찾지 못했습니다.")
+            else:
+                loc, site = sample.locality, sample.locality.site
+
+        # 2) 코드를 적어 새로 만드는 길. 같은 코드가 이미 있으면 그것에 붙인다
+        site_code = (p.get("site_code") or "").strip()
+        loc_code = (p.get("core_code") or "").strip()
+        sample_code = (p.get("sample_code") or "").strip()
+        if sample is None and site is None and site_code:
+            site = Site.objects.filter(code=site_code).first()
+            if site is None:
+                site, made["site"] = Site(code=site_code), True
+        if sample is None and loc is None and loc_code and site is not None:
+            loc = (Locality.objects.filter(site=site, code=loc_code).first()
+                   if site.pk else None)
+            if loc is None:
+                loc, made["loc"] = Locality(site=site, code=loc_code), True
+        if sample is None and sample_code and loc is not None:
+            sample = (Sample.objects.filter(locality=loc, code=sample_code)
+                      .first() if loc.pk else None)
+            if sample is None:
+                sample = Sample(locality=loc, code=sample_code)
+                made["sample"] = True
+
+        # 아무것도 안 한 저장이 성공으로 보이면 사람이 같은 일을 다시 한다
+        if sample is None and (sample_code or loc_code) and not attach:
+            errors.append(
+                "시료를 붙이려면 지역·지점·시료 코드를 모두 채워야 합니다 — "
+                "위의 기존 시료에 붙이기 에서 고르는 쪽이 안전합니다.")
+
+        own = {k: had[k] or made[k] for k in had}
+        try:
+            slide.name = (p.get("slide_name") or slide.name).strip()
+            slide.description = (p.get("description") or "").strip()
+            # 관찰 이름표. **`obs_no` 는 여기서 못 고친다** — 폴더 접미사가
+            # 정하는 자동값이라 다음 반입에 덮인다
+            slide.obs_label = (p.get("obs_label") or "").strip()[:10]
+            # 분획·분할·격자 칸 수 — 관찰의 것 (models.Slide 머리말)
+            slide.fraction_um = _num(p.get("fraction_um"))
+            slide.split_denom = _num(p.get("split_denom"), int)
+            slide.cells = _num(p.get("cells"), int)
+            # 체크박스는 안 켜면 아무것도 안 보낸다 — 없는 것이 곧 꺼짐이다
+            slide.hide_in_list = bool(p.get("hide_in_list"))
+            slide.exclude_from_totals = bool(p.get("exclude_from_totals"))
+
+            # **붙이기만 할 때는 위 세 층의 칸을 안 쓴다** (`own`)
+            if sample and own["sample"]:
+                sample.code = (p.get("sample_code") or sample.code).strip()
+                sample.note = (p.get("sample_note") or "").strip()
+                sample.depth_cm = _num(p.get("depth_cm"))
+                sample.dry_weight_g = _num(p.get("dry_weight_g"))
+            if loc and own["loc"]:
+                loc.code = (p.get("core_code") or loc.code).strip()
+                loc.collect_kind = (p.get("core_kind") or "").strip()
+                loc.lat = _num(p.get("core_lat"))
+                loc.lon = _num(p.get("core_lon"))
+                loc.water_depth_m = _num(p.get("core_water_depth"))
+                d = (p.get("core_collected_at") or "").strip()
+                loc.collected_at = date.fromisoformat(d) if d else None
+                loc.note = (p.get("core_note") or "").strip()
+            if site and own["site"]:
+                site.code = (p.get("site_code") or site.code).strip()
+                site.name = (p.get("site_name") or "").strip()
+                site.region = (p.get("site_region") or "").strip()
+                a = (p.get("site_area") or "").strip()
+                if a in dict(Site.AREA):
+                    site.area = a
+                site.lat = _num(p.get("site_lat"))
+                site.lon = _num(p.get("site_lon"))
+                site.note = (p.get("site_note") or "").strip()
+        except ValueError as e:
+            errors.append(f"값을 읽지 못했습니다: {e}")
+
+        if not errors:
+            try:
+                attached = False
+                with transaction.atomic():
+                    if site and own["site"]:
+                        site.save()
+                    if loc and own["loc"]:
+                        loc.site = site
+                        loc.save()
+                    if sample and own["sample"]:
+                        sample.locality = loc
+                        sample.save()
+                    # **`pk` 는 저장한 뒤에야 있다.** 새로 만든 시료를 저장 전에
+                    # `slide.sample_id != sample.pk` 로 견주면 `None != None` 이라
+                    # 안 붙는다 — "새로 만들어 붙였습니다" 만 뜨고 관찰은 그대로
+                    # 소속 없이 남았다 (ForGIA 1단계 시험이 잡았다)
+                    if sample is not None and slide.sample_id != sample.pk:
+                        slide.sample = sample
+                        attached = True
+                    slide.save()
+                saved = True
+                new = " · ".join(x for x in (
+                    f"지역 {site.code}" if made["site"] else "",
+                    f"지점 {loc.code}" if made["loc"] else "",
+                    f"시료 {sample.code}" if made["sample"] else "") if x)
+                if new:
+                    messages_made = f"{new} 을(를) 새로 만들어 붙였습니다."
+                elif attached:
+                    messages_made = (f"{site.code} · {loc.code} · {sample.code} "
+                                     f"시료에 붙였습니다.")
+            except IntegrityError as e:
+                errors.append(f"같은 코드가 이미 있습니다: {e}")
+
+    sample_choices, sibling = [], None
+    if sample is None:
+        for sm in (Sample.objects.select_related("locality__site")
+                   .order_by("locality__site__code", "locality__code",
+                             "depth_cm", "code")):
+            sample_choices.append({
+                "pk": sm.pk,
+                "site_code": sm.locality.site.code,
+                "loc_code": sm.locality.code,
+                "code": sm.code,
+                "label": sm.locality.site.region or sm.locality.site.name or "",
+                "n_slides": sm.slides.count(),
+            })
+        sibling = next((s for s in slide.sibling_observations() if s.sample_id),
+                       None)
+
+    scales = data.scales_by_slide()
+    return render(request, "viewer/dataset_edit.html", {
+        "slug": slug,
+        "label": slide.name,
+        "slide": slide,
+        "sample": sample,
+        "core": loc,
+        "site": site,
+        "sample_choices": sample_choices,
+        "sibling": sibling,
+        "sibling_sample_pk": sibling.sample_id if sibling else None,
+        "core_code": loc.code if loc else "-",
+        "site_code": site.code if site else "-",
+        "sample_code": sample.code if sample else "-",
+        "n_slides_sample": sample.slides.count() if sample and sample.pk else 0,
+        "n_samples_loc": loc.samples.count() if loc and loc.pk else 0,
+        "n_slides_site": (Slide.objects.filter(
+            sample__locality__site=site).count() if site and site.pk else 0),
+        "n_viewpoints": slide.viewpoints.count(),
+        "n_frames": slide.frames.count(),
+        "site_areas": Site.AREA,
+        "um_per_pixel": scales.get(slug),
+        "errors": errors,
+        "saved": saved,
+        "made": messages_made,
+        "no_site": site is None,
+        "no_core": loc is None,
+        "no_sample": sample is None,
+    })
+
+
+
+
+# --- 시스템 설정 ---------------------------------------------------------------
+def system_settings(request):
+    """관리 화면 — 지역·지점·시료를 만들고 고치고 지운다. 소속도 여기서 옮긴다.
+    **관찰은 여기서 안 만들고 안 지운다.** **쓰기는 전부 POST 다.**"""
+    if request.method == "POST":
+        p = request.POST
+        act = (p.get("act") or "").strip()
+        if act == "create":
+            ok, m = manage_data.create((p.get("kind") or "").strip(), p)
+        elif act == "delete":
+            ok, m = manage_data.delete((p.get("kind") or "").strip(),
+                                       _num(p.get("pk"), int) or 0)
+        elif act == "move_slide":
+            ok, m = manage_data.move_slide(_num(p.get("slide"), int) or 0,
+                                           _num(p.get("sample"), int))
+        elif act == "move_sample":
+            ok, m = manage_data.move_sample(_num(p.get("sample"), int) or 0,
+                                            _num(p.get("locality"), int) or 0)
+        else:
+            ok, m = False, "모르는 동작입니다."
+        # POST 뒤에 redirect 한다 — 새로 고침이 같은 일을 다시 하면 안 된다
+        return redirect(f"{reverse('system_settings')}?{'msg' if ok else 'err'}={m}")
+
+    msg, err = request.GET.get("msg", ""), request.GET.get("err", "")
+    ctx = manage_data.overview()
+    # 지우기 문턱을 **미리** 계산해 행에 달아 둔다 — 눌러 보고 "지울 수 없습니다"
+    # 를 만나면 무엇을 먼저 치워야 하는지 알 수 없다
+    for kind, rows in (("site", ctx["sites"]), ("locality", ctx["localities"]),
+                       ("sample", ctx["samples"])):
+        for row in rows:
+            row.block_why = " · ".join(manage_data.deletable(kind, row.pk)[1])
+    return render(request, "viewer/system_settings.html", {
+        **ctx, "site_areas": Site.AREA, "msg": msg, "err": err,
+    })
+
+
+def system_settings_pipeline(request):
+    """시스템 설정 · 파이프라인 — 폴러가 살아 있는가, 무엇이 밀려 있는가 (DiaRUGA 098)."""
+    return render(request, "viewer/system_settings_pipeline.html",
+                  {"p": data.pipeline_status()})
+
+
+def settings_redirect(request, tab=""):
+    """옛 `/manage/…` 주소를 `/system-settings/…` 로 (DiaRUGA 와 같은 주소 모양). 302."""
+    name = {"pipeline": "system_settings_pipeline"}.get(tab, "system_settings")
+    url = reverse(name)
+    if request.META.get("QUERY_STRING"):
+        url = f"{url}?{request.META['QUERY_STRING']}"
+    return redirect(url)
+
+
+# --- 이미지 --------------------------------------------------------------------
+def image(request):
+    """`?p=<DATA_ROOT 기준 상대경로>&w=<가로 픽셀>`. 폴더명에 공백이 있어서 경로를
+    쿼리로 받는다. `w` 가 있으면 축소본을 만들어 캐시한다."""
+    rel = request.GET.get("p", "")
+    path = data.safe_image_path(rel)
+    if path is None:
+        raise Http404("image not found or outside allowed dirs")
+
+    raw = request.GET.get("w")
+    if not raw:
+        return _jpeg(request, path)
+    try:
+        width = max(32, min(int(raw), 2048))
+    except ValueError:
+        raise Http404("bad width")
+    thumb = _thumbnail(path, width)
+    return _jpeg(request, thumb or path)
+
+
+def _jpeg(request, path):
+    resp = FileResponse(open(path, "rb"), content_type="image/jpeg")
+    # 주소에 mtime 이 들어 있어(`thumb` 태그의 `v=`) 오래 캐시해도 안전하다
+    resp["Cache-Control"] = "public, max-age=604800"
+    return resp
+
+
+def _thumbnail(path, width):
+    """축소본 경로를 돌려준다. 원본 mtime 이 바뀌면 자동으로 다시 만든다."""
+    from PIL import Image
+
+    stat = path.stat()
+    key = f"{path}|{stat.st_mtime_ns}|{width}"
+    name = hashlib.sha1(key.encode()).hexdigest()[:20] + ".jpg"
+    cache_dir = settings.THUMB_CACHE
+    out = cache_dir / name
+    if out.exists():
+        return out
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            if img.width > width:
+                height = round(img.height * width / img.width)
+                img = img.resize((width, height), Image.LANCZOS)
+            tmp = out.with_suffix(".tmp")
+            img.save(tmp, "JPEG", quality=82)
+            tmp.replace(out)
+    except OSError:
+        return None
+    return out
+
+
+# --- healthz -------------------------------------------------------------------
 def healthz(request):
     """판·DB·안전망 상태를 한 번에 낸다 (DiaRUGA `/healthz` 와 같은 모양).
 
     | 상태 | 코드 | 뜻 |
     |---|---|---|
     | `ok` | 200 | 정상 |
-    | `degraded` | **200** | 서비스는 되는데 손상이 감지됐다 (백업이 낡았다 등) |
+    | `degraded` | **200** | 서비스는 되는데 손상이 감지됐다 (무결성 깃발 · 백업이 낡았다) |
     | `unhealthy` | 503 | DB 를 못 열거나 자료가 통째로 없다 |
 
     **`degraded` 를 503 으로 두면 안 된다.** `deploy.sh` 의 기동 게이트가 200 을
-    기다린다 — degraded 에 503 을 내면 "백업이 깨졌다" 는 신호가 배포 자체를 못
-    끝내게 만든다. 배포를 막는 일은 `smoke.sh` 가 `status != ok` 로 한다.
-
-    **가볍게 유지한다.** 인증이 없는 엔드포인트라 비싼 검사를 여기 두면 DoS
-    표면이 된다. `count(*)` 넷과 `stat` 하나다.
-
-    **`slide` 가 0 이면 unhealthy 다.** 마운트가 어긋나 컨테이너가 빈 DB 를 새로
-    만들어도 "파일이 있는가" 검사는 통과한다 — `rows > 0` 만이 그것을 잡는다.
-    0단계의 빈 DB 도 그래서 unhealthy 로 나온다. 맞는 답이다.
-
-    **무결성 깃발(`db_sentinel`)은 1단계에서 온다** — `ops/` 와 함께.
+    기다린다. 배포를 막는 일은 `smoke.sh` 가 `status != ok` 로 한다.
+    **가볍게 유지한다** — `count(*)` 몇 개와 `stat` 하나, 깃발 파일 읽기뿐이다.
+    **`slide` 가 0 이면 unhealthy 다** — 마운트가 어긋나 빈 DB 가 새로 만들어져도
+    "파일이 있는가" 검사는 통과하기 때문이다.
     """
     info = {"status": "ok", "version": os.environ.get("IMAGE_TAG", "")}
     notes = []
 
-    # 1) DB — 연결과 행 수. 못 열면 나머지는 볼 것도 없다.
     try:
         info["db"] = {name: model.objects.count() for name, model in HEALTH_TABLES}
     except Exception as e:                       # noqa: BLE001 — 무엇이 나오든 죽지 않는다
@@ -80,7 +443,15 @@ def healthz(request):
             info["status"] = "unhealthy"
             notes.append("슬라이드가 0 이다 — DB 마운트가 어긋났을 수 있다")
 
-    # 2) 백업 신선도. 문턱을 안 주면 알려만 준다 (settings.BACKUP_MAX_AGE_H 주석).
+    # 백업·폴러가 세운 무결성 깃발. 파일을 읽기만 한다 (DiaRUGA 034·061).
+    # **"백업 실패" 라고 적지 않는다** — 깃발을 세우는 주인이 백업만이 아니다
+    flags = db_sentinel.read(settings.FORGIA_DB)
+    info["integrity_flags"] = flags
+    if flags and info["status"] == "ok":
+        info["status"] = "degraded"
+    for f in flags:
+        notes.append(f"무결성 깃발 [{f['source']} {f['time']}] {f['reason']}")
+
     age_h = None
     try:
         snaps = list(settings.BACKUP_DIR.glob("ForGIA_*.db"))
@@ -101,6 +472,5 @@ def healthz(request):
     info["notes"] = notes
     code = 503 if info["status"] == "unhealthy" else 200
     resp = JsonResponse(info, status=code, json_dumps_params={"ensure_ascii": False})
-    # 앞단이나 브라우저가 이 답을 캐시하면 지난 상태를 보고 판단하게 된다
     resp["Cache-Control"] = "no-store"
     return resp

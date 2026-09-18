@@ -1,0 +1,83 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_map_ant.html` 에서 왔다.
+{% endcomment %}
+{% comment %}
+  남극 지도 — EPSG:3031 (WGS 84 / Antarctic Polar Stereographic).
+  남극점 중심, 71°S 에서 축척이 참값. 남극 연구의 표준 투영이다.
+
+  해안선은 `antarctica.py` 에 미리 투영해 구워 뒀다. 지오 라이브러리도 타일
+  서버도 쓰지 않는다 — 이 뷰어는 정적 파일이 하나도 없고, 지도 하나 때문에
+  외부 의존성과 사내망 TLS 문제를 들일 이유가 없다.
+
+  좌표 단위는 km 이고 y 는 이미 화면 기준(북쪽이 위)으로 뒤집혀 있다.
+{% endcomment %}
+  <svg class="antmap" viewBox="-3800 -3800 7600 7600" role="img"
+       aria-label="남극 지도 위의 시료 위치">
+    <defs>
+      {# 남위 60도 바깥은 그리지 않는다 — 멀리 떨어진 섬이 테두리를 넘어간다 #}
+      <clipPath id="antclip">
+        <circle cx="0" cy="0" r="{{ antmap.boundary }}"/>
+      </clipPath>
+    </defs>
+
+    <circle class="ocean" cx="0" cy="0" r="{{ antmap.boundary }}"/>
+    <g clip-path="url(#antclip)">
+      <path class="land" d="{{ antmap.land }}"/>
+    </g>
+
+    {# 격자. 위도 원과 30도마다의 경도 살 #}
+    <g class="grat">
+      {% for lat, r in antmap.lat_circles %}<circle cx="0" cy="0" r="{{ r }}"/>{% endfor %}
+      {% for lon, x, y in antmap.lon_spokes %}<line x1="0" y1="0" x2="{{ x }}" y2="{{ y }}"/>{% endfor %}
+      <circle class="edge" cx="0" cy="0" r="{{ antmap.boundary }}"/>
+    </g>
+
+{% comment %}
+      격자 이름. 위도는 부호 대신 S 로 통일한다 — "-70°" 와 "60°S" 가 한 화면에
+      섞여 있었다. 경도는 90도마다만 붙인다(살은 30도마다 긋는다).
+    {% endcomment %}
+    <g class="glabel">
+      {% for label, r in antmap.lat_circles %}
+        <text x="30" y="{{ r }}" dy="-14">{{ label }}</text>
+      {% endfor %}
+      <text x="30" y="{{ antmap.boundary }}" dy="-14">{{ antmap.boundary_label }}</text>
+      {% for label, x, y, anchor, dy in antmap.lon_labels %}
+        <text x="{{ x }}" y="{{ y }}" dy="{{ dy }}" text-anchor="{{ anchor }}"
+              class="lonlab">{{ label }}</text>
+      {% endfor %}
+    </g>
+
+    {# 해역 이름. 마커보다 아래에 깔아 겹쳐도 마커가 읽히게 한다 #}
+    <g class="sealabel">
+      {% for name, x, y in antmap.sea_labels %}<text x="{{ x }}" y="{{ y }}"{% if name == "로스해" %} class="zoomlink" data-zoom-to="ross"{% endif %}>{{ name }}</text>{% endfor %}
+    </g>
+
+{% comment %}
+    로스해 확대 틀. 확대 지도가 어디를 담는지 여기 사각형으로 보인다 — 없으면
+    두 지도의 관계를 사람이 머리로 맞춰야 한다. 누르면 확대로 간다.
+    좌표는 `ross.FRAME` (이 지도의 좌표 · 돌리기 전) 이다.
+{% endcomment %}
+    {% with f=antmap.ross.frame %}
+    <rect class="zoomframe" data-zoom-to="ross" x="{{ f.0 }}" y="{{ f.1 }}"
+          width="{{ f.2 }}" height="{{ f.3 }}"><title>로스해 확대 — 누르면 그 틀을 봅니다</title></rect>
+    {% endwith %}
+
+    {# 시료 위치 #}
+    <g class="sites">
+      {% for p in antmap.points %}
+      <a href="{% url 'dataset' p.slugs.0 %}" data-site="{{ p.code }}">
+        <g class="site{% if not p.exact %} approx{% endif %}"
+           transform="translate({{ p.x }},{{ p.y }})">
+          {# 대략 위치는 원으로 범위를 함께 그린다 — 점만 찍으면 실측처럼 보인다 #}
+          {% if not p.exact %}<circle class="halo" r="260"/>{% endif %}
+          <circle class="dot" r="70"/>
+          <text class="tag" y="-150">{{ p.code }}</text>
+          <text class="sub" y="-150" dy="115">시야 {{ p.n_viewpoints }}</text>
+          <title>{{ p.label }} · {{ p.core_codes|join:", " }} · 슬라이드 {{ p.n_slides }}장 · 시야 {{ p.n_viewpoints }}개
+{% if p.exact %}실측 좌표{% else %}대략 위치 ({{ p.approx_note }}) — 정확한 좌표가 아직 없습니다{% endif %}</title>
+        </g>
+      </a>
+      {% endfor %}
+    </g>
+  </svg>
+

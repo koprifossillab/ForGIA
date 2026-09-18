@@ -1,0 +1,18 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_obs.html` 에서 왔다.
+{% endcomment %}
+{% comment %}
+  관찰 배지 — 표·카드·코어 페이지가 같은 것을 쓴다. 세 화면이 다르게 그리면
+  같은 슬라이드가 어디서 보느냐에 따라 달라 보인다.
+
+  받는 것: `d` (`data._obs()` 가 실은 열쇠 — obs_badge · hidden · excluded)
+
+  **관찰이 하나뿐이면 아무것도 안 낸다.** 접미사 없이 검토가 끝난 347 시야가
+  지금 모습 그대로 남는다.
+
+  **`※` 는 색의 보조다.** 숨김은 줄을 흐리게 하는 것이 주고, 이 기호는 흑백
+  출력·색각 이상에서 그 정보가 통째로 사라지지 않게 남기는 몫이다 — 목록이
+  docx 보고서로 구워져 NAS 로 나간다.
+{% endcomment %}
+{% if d.obs_badge %}<span class="obsbadge" title="관찰 {% if d.obs_label %}{{ d.obs_label }} (폴더 접미사 {{ d.obs_no }}){% else %}{{ d.obs_no }} 번째{% endif %} — 같은 시료를 처리 방법을 달리해 관찰한 것">{{ d.obs_badge }}</span>{% endif %}
+{% if d.hidden %}<span class="hidemark" title="목록에서 숨긴 슬라이드입니다 (숨긴 항목 보기가 켜져 있어 보입니다)">※</span>{% endif %}

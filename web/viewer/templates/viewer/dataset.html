@@ -1,0 +1,84 @@
+{% extends "viewer/base.html" %}
+{% load viewer_extras %}
+{% comment %}
+  DiaRUGA v0.29.0 `dataset.html` 에서 왔다. 검출 마스크·검토 완료·묶음 표시는 2·3단계에서
+  되살린다 — 지금은 시야(격자 칸)의 사진과 합성 여부만 낸다.
+{% endcomment %}
+{% block title %}{{ label }} — ForGIA{% endblock %}
+{% block subtitle %}{{ label }}{% endblock %}
+{% comment %}
+  **문턱 조정 링크를 걷었다** (사용자 요청 2026-08-08). `/d/<slug>/thresholds/` 는
+  그대로 산다 — 주소를 치면 열린다. 링크만 없다. 목록 화면도 같이 걷었다.
+{% endcomment %}
+{% comment %}
+  **머리줄 nav 를 비웠다** (사용자 요청 2026-08-08). `검출 결과만 보기`·`계측 표`
+  는 아래 제목 줄로 내렸다 — 이 슬라이드를 **다른 각도로 보는 길** 셋이 한자리에
+  모여야 고를 수 있다. 흩어져 있으면(둘은 맨 위 띠, 하나는 본문 문단 한가운데)
+  세 번째가 있는 줄도 모른다.
+{% endcomment %}
+
+{% block content %}
+<div class="crumb"><a href="{% url 'index' %}">데이터셋</a> / {{ label }}</div>
+{% comment %}
+  **썸네일마다 그려지는 마스크가 어느 회차의 것인지**를 여기서 말한다 (DiaRUGA 088).
+  아래 "검출 N → 검토 후 M" 도 이 묶음의 숫자다. `.pagehead` 는 `base.html` 의
+  것이라 목록 화면과 같은 자리에 같은 모양으로 놓인다.
+{% endcomment %}
+<div class="pagehead">
+  <h2>{{ label }}</h2>
+  {% comment %}
+    같은 슬라이드를 다른 각도로 보는 길 셋. **오른쪽 정렬**이다(사용자 요청) —
+    제목·묶음 표시는 "무엇을 보고 있는가", 이쪽은 "어디로 갈 수 있는가" 라
+    줄의 양 끝으로 갈라 두면 읽는 방향이 안 섞인다.
+  {% endcomment %}
+  <span class="pagelinks">
+    <a href="{% url 'dataset_edit' slug %}">슬라이드 정보 편집</a>
+  </span>
+</div>
+<p class="dim mono" style="font-size:12px; margin-bottom:2px">
+  {% if site %}{{ site }} · {% endif %}{% if core %}{{ core }} · {% endif %}{% if depth_cm %}{% include "viewer/_depth.html" with depth_cm=depth_cm only %} · {% endif %}
+  {% if fraction_badge %}{{ fraction_badge }} · {% endif %}{% if split_denom %}1/{{ split_denom }} · {% endif %}
+  {% if um_per_pixel %}{{ um_per_pixel|floatformat:4 }} µm/px · {% endif %}
+  사진 {{ n_images }} → 시야 {{ n_groups }} · 평균 {{ mean_size }}장 ·
+  싱글턴 {{ singletons }} · 최대 {{ max_size }}장 · 합성 {{ n_stacks }}/{{ n_groups }}
+</p>
+
+<div class="grid">
+{% for g in groups %}
+  <a class="tile" href="{% url 'group' slug g.id %}">
+    {% if g.cover_rel %}
+      <span class="thumbwrap">
+        <img loading="lazy" src="{% thumb g.cover_rel 300 %}" alt="group {{ g.id }}">
+        {% comment %}
+          사진이 여럿인 시야 표시. 싱글턴에 배지를 붙이는 것보다 이쪽이 낫다 —
+          대부분이 여럿이므로 배지를 달면 목록이 배지로 덮인다. 겹친 네모로
+          "초점을 바꿔 여러 장 찍은 시야" 를 나타낸다.
+        {% endcomment %}
+        {% if g.n > 1 %}
+          <span class="multi" title="사진 {{ g.n }}장 (초점 시리즈)">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              {% comment %}
+                뒤 장은 위·오른쪽 모서리만 보인다. 인스타그램의 캐러셀 표시와
+                같은 모양이라 "여러 장" 이라는 뜻이 바로 읽힌다.
+              {% endcomment %}
+              <path class="back" d="M8 3.5h9.5a2.5 2.5 0 0 1 2.5 2.5V16"/>
+              <rect class="front" x="3.5" y="7.5" width="13" height="13" rx="3"/>
+            </svg>
+          </span>
+        {% endif %}
+      </span>
+    {% endif %}
+    <div class="meta">
+      <div class="t">{% if g.cell %}칸 {{ g.cell }} · {% endif %}g{{ g.id }} · {{ g.n }}장</div>
+      <div class="dim mono">{{ g.sharpest }}</div>
+      <div style="margin-top:5px; display:flex; gap:5px; flex-wrap:wrap">
+        {% if g.has_stack %}<span class="badge on">합성됨</span>{% endif %}
+      </div>
+    </div>
+  </a>
+{% endfor %}
+</div>
+
+<style>
+</style>
+{% endblock %}

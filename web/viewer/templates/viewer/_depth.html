@@ -1,0 +1,13 @@
+{% comment %}
+  시료가 코어의 어디에서 왔는가 — 한 칸. DiaRUGA `_depth.html` 에서 노두 갈래를
+  뺀 것이다 (P01 — 시료가 남극 코어뿐이다). 목록 표·카드·시야 목록 머리·지도
+  범례가 같은 규칙으로 읽는다.
+
+  - **깊이가 있는 시료** — 값 그대로 `cm`
+  - **깊이를 아직 안 채운 시료** — 표에서는 칸을 비울 수 없으니 `—`, 줄글
+    속에서는 아예 내지 않는다. 그 갈래를 `dash` 가 정한다
+
+  쓰임:
+    {% templatetag openblock %} include "viewer/_depth.html" with depth_cm=d.depth_cm dash=1 only {% templatetag closeblock %}
+{% endcomment %}
+{% if depth_cm %}{{ depth_cm|floatformat:"-1" }} cm{% elif dash %}<span class="dim" title="깊이가 아직 채워지지 않았습니다">—</span>{% endif %}

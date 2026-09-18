@@ -1,0 +1,221 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `system_settings.html` 에서 왔다 — 노두 갈래(지점 유형·단면 위치)를 뺐고
+  시료에 건시료 무게를 더했다.
+{% endcomment %}
+{% block title %}시스템 설정 · 자료 — ForGIA{% endblock %}
+{% block subtitle %}<b>시스템 설정</b> · 자료{% endblock %}
+{% block content %}
+{% comment %}
+  **`preview_url` 을 손으로 넘긴다.** `only` 가 바깥 컨텍스트를 끊으므로
+  컨텍스트 프로세서(`viewer/context.py`)가 넣어 준 값도 조각 안에서는
+  안 보인다 — 안 넘기면 미리보기 탭이 **예외도 경고도 없이 사라진다.**
+  실제로 그렇게 한 번 짰다.
+{% endcomment %}
+{% include "viewer/_system_settings_nav.html" with here="data" preview_url=preview_url only %}
+
+{% comment %}
+  층 넷을 한 화면에 세운다 — 지역 → 지점 → 시료 → 관찰.
+
+  **관찰은 만들지도 지우지도 못한다.** 폴더가 만드는 것이고 그 아래에 재생성
+  불가한 교정이 달려 있다. 여기서 되는 것은 소속을 옮기고 떼는 것뿐이다.
+
+  **지우기 문턱은 서버가 미리 계산해 온다**(`block`). 눌러 보고 "지울 수
+  없습니다" 를 만나면 무엇을 먼저 치워야 하는지 알 수 없다.
+{% endcomment %}
+
+{% if msg %}<div class="okbar">{{ msg }}</div>{% endif %}
+{% if err %}<div class="errbar">{{ err }}</div>{% endif %}
+
+<p class="dim mono" style="font-size:12px">
+  지역 {{ n_sites }} · 지점 {{ n_locs }} · 시료 {{ n_samples }} · 관찰 {{ n_slides }}
+  {% if orphans %} · <b style="color:var(--err-fg)">소속 없는 관찰 {{ orphans|length }}</b>{% endif %}
+</p>
+
+{% if orphans %}
+{% comment %}
+  **이 화면이 있어야 하는 첫째 이유다.** 소속 없는 관찰은 다른 어느 화면에도
+  안 나온다 — 어느 권역 탭에도 안 걸리고, 500 도 404 도 아니라 그냥 사라진다.
+  DiaRUGA 에서 실제로 하루 동안 그 상태인 관찰이 있었다.
+{% endcomment %}
+<section class="panel warnpanel">
+  <h3>소속 없는 관찰 <span class="dim">{{ orphans|length }}개</span></h3>
+  <p class="dim">어느 권역 탭에도 안 나옵니다 — 목록·지도·지점 페이지 어디에도
+    없습니다. 시료에 붙이면 제자리로 돌아갑니다.</p>
+  <table class="mtab">
+    <thead><tr><th>관찰</th><th>붙일 시료</th><th></th></tr></thead>
+    <tbody>
+      {% for o in orphans %}
+      <tr>
+        <td><a href="{% url 'dataset' o.slide.slug %}">{{ o.slide.name }}</a>
+          {% if o.slide.obs_badge %}<span class="obsbadge">{{ o.slide.obs_badge }}</span>{% endif %}</td>
+        <td colspan="2">
+          <form method="post" class="inline">{% csrf_token %}
+            <input type="hidden" name="act" value="move_slide">
+            <input type="hidden" name="slide" value="{{ o.slide.pk }}">
+            <select name="sample">
+              <option value="">(고르지 않음)</option>
+              {% for s in samples %}
+                <option value="{{ s.pk }}" {% if o.suggest and s.pk == o.suggest.pk %}selected{% endif %}>
+                  {{ s.locality.site.code }} · {{ s.locality.code }} · {{ s.code }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn go">붙이기</button>
+            {% if o.suggest %}<span class="hint">같은 시료의 다른 관찰
+              <code class="mono">{{ o.suggest_from.name }}</code> 이(가) 거기 있어
+              미리 골라 두었습니다.</span>{% endif %}
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h3>지역 <span class="dim">{{ n_sites }}</span></h3>
+  <table class="mtab">
+    <thead><tr><th>코드</th><th>이름 · 해역</th><th>권역</th>
+      <th class="num">지점</th><th class="num">시료</th><th class="num">관찰</th><th></th></tr></thead>
+    <tbody>
+      {% for s in sites %}
+      <tr>
+        <td class="mono"><b>{{ s.code }}</b></td>
+        <td>{{ s.region|default:s.name|default:"—" }}</td>
+        <td class="dim">{{ s.get_area_display }}</td>
+        <td class="num">{{ s.n_loc }}</td><td class="num">{{ s.n_samples }}</td>
+        <td class="num">{{ s.n_slides }}</td>
+        <td class="act">{% include "viewer/_delbtn.html" with kind="site" pk=s.pk why=s.block_why label=s.code only %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" class="newrow">{% csrf_token %}
+    <input type="hidden" name="act" value="create">
+    <input type="hidden" name="kind" value="site">
+    <input type="text" name="code" placeholder="코드 (RS23)" maxlength="32" required>
+    <input type="text" name="region" placeholder="해역·이름 (로스해)" maxlength="200">
+    <select name="area">{% for k, lab in site_areas %}<option value="{{ k }}">{{ lab }}</option>{% endfor %}</select>
+    <button type="submit" class="btn">지역 추가</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>지점 <span class="dim">{{ n_locs }}</span></h3>
+  <table class="mtab">
+    <thead><tr><th>지역</th><th>코드</th><th>채취 방식</th>
+      <th class="num">시료</th><th class="num">관찰</th><th></th></tr></thead>
+    <tbody>
+      {% for c in localities %}
+      <tr>
+        <td class="mono dim">{{ c.site.code }}</td>
+        <td class="mono"><b><a href="{% url 'core' c.site.code c.code %}">{{ c.code }}</a></b></td>
+        <td class="dim">{{ c.collect_kind|default:"—" }}</td>
+        <td class="num">{{ c.n_samples }}</td><td class="num">{{ c.n_slides }}</td>
+        <td class="act">{% include "viewer/_delbtn.html" with kind="locality" pk=c.pk why=c.block_why label=c only %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" class="newrow">{% csrf_token %}
+    <input type="hidden" name="act" value="create">
+    <input type="hidden" name="kind" value="locality">
+    <select name="site">{% for s in sites %}<option value="{{ s.pk }}">{{ s.code }}</option>{% endfor %}</select>
+    <input type="text" name="code" placeholder="코드 (GC03)" maxlength="32" required>
+    <input type="text" name="collect_kind" placeholder="채취 방식 (gravity core)" maxlength="64">
+    <button type="submit" class="btn">지점 추가</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>시료 <span class="dim">{{ n_samples }}</span></h3>
+  <table class="mtab">
+    <thead><tr><th>지역 · 지점</th><th>코드</th><th>깊이</th><th>건시료 <span class="unit">(g)</span></th>
+      <th class="num">관찰</th><th>옮기기</th><th></th></tr></thead>
+    <tbody>
+      {% for m in samples %}
+      <tr>
+        <td class="mono dim">{{ m.locality.site.code }} · {{ m.locality.code }}</td>
+        <td class="mono"><b>{{ m.code }}</b></td>
+        <td>{% if m.depth_cm is not None %}{{ m.depth_cm|floatformat:"-1" }} cm
+          {% else %}<span class="dim" title="축에 안 놓이고 정렬에서 뒤로 밀립니다">—</span>{% endif %}</td>
+        <td>{% if m.dry_weight_g is not None %}{{ m.dry_weight_g|floatformat:"-2" }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="num">{{ m.n_slides }}</td>
+        <td>
+          <form method="post" class="inline">{% csrf_token %}
+            <input type="hidden" name="act" value="move_sample">
+            <input type="hidden" name="sample" value="{{ m.pk }}">
+            <select name="locality">
+              {% for c in localities %}
+                <option value="{{ c.pk }}" {% if c.pk == m.locality_id %}selected{% endif %}>
+                  {{ c.site.code }} · {{ c.code }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn">옮기기</button>
+          </form>
+        </td>
+        <td class="act">{% include "viewer/_delbtn.html" with kind="sample" pk=m.pk why=m.block_why label=m only %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" class="newrow">{% csrf_token %}
+    <input type="hidden" name="act" value="create">
+    <input type="hidden" name="kind" value="sample">
+    <select name="locality">{% for c in localities %}<option value="{{ c.pk }}">{{ c.site.code }} · {{ c.code }}</option>{% endfor %}</select>
+    <input type="text" name="code" placeholder="코드 (71cm)" maxlength="64" required>
+    <input type="number" step="0.1" name="depth_cm" placeholder="깊이 cm">
+    <input type="number" step="any" min="0" name="dry_weight_g" placeholder="건시료 무게 g">
+    <button type="submit" class="btn">시료 추가</button>
+  </form>
+  <p class="hint">분획·분할은 시료가 아니라 <b>관찰(슬라이드)</b>의 것입니다 — 각 슬라이드의
+    정보 편집에서 적습니다. 건시료 무게는 계수표가 개체/g 로 환산할 때 씁니다.</p>
+</section>
+
+<script>
+// 지우기는 되돌릴 수 없다. **누르기 전에 묻는다.** `data-ask` 가 없는 버튼은
+// 묻지 않는다 — 나중에 버튼이 늘어도 여기를 안 고친다.
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-ask]');
+  if (b && !window.confirm(b.dataset.ask)) { e.preventDefault(); }
+});
+</script>
+
+<style>
+  .panel {
+    border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+    padding: 13px 15px 15px; margin-bottom: 16px;
+  }
+  .panel.warnpanel { border-color: var(--err-line); }
+  .panel h3 { margin: 0 0 4px; font-size: 14px; }
+  .panel > p.dim { margin: 0 0 10px; font-size: 12px; }
+  form.inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0; }
+  .newrow {
+    display: flex; gap: 7px; align-items: center; flex-wrap: wrap;
+    margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line);
+  }
+  .newrow input, .newrow select, form.inline select, form.inline input {
+    font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: 5px;
+    background: var(--field-bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  .newrow input { min-width: 120px; }
+  .btn {
+    font: inherit; font-size: 12.5px; padding: 4px 11px; border-radius: 5px;
+    cursor: pointer; background: transparent; color: inherit;
+    border: 1px solid var(--line);
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.go { border-color: var(--accent); color: var(--accent); }
+  /* 지울 수 없는 것은 눌리기 전에 그렇게 보여야 한다 */
+  .btn.del:hover { border-color: var(--err-fg); color: var(--err-fg); }
+  .btn.del[disabled] { opacity: .4; cursor: not-allowed; }
+  .btn.del[disabled]:hover { border-color: var(--line); color: inherit; }
+  .hint { display: block; margin-top: 7px; font-size: 11px; color: var(--dim); }
+  .okbar, .errbar {
+    padding: 9px 13px; border-radius: 6px; margin-bottom: 13px; font-size: 13px;
+  }
+  .okbar { background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-line); }
+  .errbar { background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-line); }
+</style>
+{% endblock %}

@@ -1,0 +1,75 @@
+# ForGIA 파이프라인 이미지 — 그룹핑·합성·YOLO 검출·분류·문턱 적용.
+# DiaRUGA v0.29.0 `deploy/Dockerfile.pipeline` 에서 왔다 — SAM2(git 의존·HF 볼륨)를 뺐다.
+#
+# CUDA 툴킷을 깔지 않는다 — torch cu126 휠이 CUDA 런타임을 들고 있고, 드라이버는
+# nvidia 컨테이너 런타임이 호스트에서 넣어 준다. 그래서 slim 베이스로 충분하다.
+#
+# 이 컨테이너는 상주하지 않는다. `docker compose run --rm` 으로 일회성으로 돌린다 —
+# 상주시키면 PyTorch 캐싱 할당자가 최대치 VRAM 을 물고 놓지 않는다 (DiaRUGA P03 "버린 선택지").
+#
+# **forgia-base 를 FROM 하지 않는다.** 그렇게 했더니 코드 한 줄만 고쳐도 base 의
+# COPY 층이 바뀌면서 그 위의 pip 층(6 GB, 10분)이 통째로 다시 깔렸다. 의존성을
+# 코드보다 먼저 깔면 코드 수정은 마지막 층만 다시 만든다.
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# 사내 CA. KOPRI 망이 download.pytorch.org 의 TLS 를 가로채 자체 CA 로 다시
+# 서명하는데 이미지에는 그 CA 가 없어 빌드가 막힌다. deploy/ca/README.md 참고.
+# 비어 있으면(망 밖) update-ca-certificates 가 그냥 넘어간다.
+COPY deploy/ca/ /usr/local/share/ca-certificates/
+
+# git 의존이 없다(SAM2 를 안 쓴다) — CA 만 깐다.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# pip 은 기본적으로 certifi 묶음을 쓰고 시스템 저장소를 보지 않는다.
+# 위에서 CA 를 깔아도 이 줄이 없으면 여전히 막힌다.
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# 의존성을 코드보다 먼저. requirements-pipeline.txt 가 -web 을 안에서 부른다.
+#
+# **YOLO 쪽은 `--no-deps` 로 따로 넣는다.** 함께 넣으면 pip 가 torch 를 내리려
+# 하고(ultralytics 의 `torch<2.10` 상한) 고정과 부딪혀 죽는다. 그 상한은
+# 보수적인 것이라 torch 2.13 에서 실측으로 확인했다 — requirements-yolo.txt 참고.
+#
+# 설치 뒤 `import` 로 확인한다. 빌드가 조용히 성공하고 실행에서 죽는 것이
+# 가장 나쁘다 — 실제로 GUI 판 opencv 가 headless 판을 가려 libxcb 로 죽은 적이 있다.
+#
+# **확인 뒤 /tmp 를 치운다.** 그 import 는 root 로 돌아서 `/tmp/Ultralytics` 를
+# root 소유로 만들어 놓는데, 컨테이너는 1000:1000 으로 돌므로 실행마다
+# `Permission denied` 를 뱉는다. 죽지는 않지만 로그가 더러워져 진짜 문제를 가린다.
+COPY requirements-web.txt requirements-pipeline.txt ./
+COPY requirements-yolo.txt ./
+RUN pip install -r requirements-pipeline.txt \
+      --extra-index-url https://download.pytorch.org/whl/cu126 \
+ && pip install --no-deps -r requirements-yolo.txt \
+ && python -c "import cv2, torch, ultralytics; \
+      print('cv2', cv2.__version__, '· torch', torch.__version__, \
+            '· ultralytics', ultralytics.__version__)" \
+ && rm -rf /tmp/Ultralytics /tmp/.ultralytics /tmp/.cache
+
+# 검출·분류 가중치는 /data3/ForGIA/models 에 파일로 둔다 (2·4단계) — 이미지에 안 굽는다.
+ENV HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    # ultralytics 는 설정·캐시를 여기 쓴다. 안 잡으면 /app 아래를 시도했다가
+    # uid 1000 이 못 써서 실행마다 오류를 뱉는다 (죽지는 않지만 로그가 더러워지고,
+    # 진짜 문제를 가린다).
+    YOLO_CONFIG_DIR=/tmp/.ultralytics
+
+# ultralytics 는 `$YOLO_CONFIG_DIR/Ultralytics` 가 **쓸 수 있는지 미리 본다.**
+# 부모가 없으면 못 쓴다고 판단해 /tmp/Ultralytics 로 물러나며 경고를 뱉는다 —
+# 매 실행 로그에 한 줄씩 쌓여 진짜 문제를 가린다. 미리 만들어 둔다.
+RUN mkdir -p /tmp/.ultralytics/Ultralytics && chmod -R 777 /tmp/.ultralytics
+
+# 코드는 마지막. 여기만 바뀌면 위 층들은 캐시가 그대로 산다.
+COPY . .

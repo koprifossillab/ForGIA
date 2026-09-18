@@ -1,0 +1,30 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_batchtag.html` 에서 왔다.
+{% endcomment %}
+{% comment %}
+  **지금 검토 중인 묶음 하나**를 보여준다 (088).
+
+  화면의 검출이 어느 회차의 것인지는 `RunBatch.for_review` 가 정하는데(P10),
+  그 사실이 관리 화면에만 있었다. 목록과 시야 목록에서는 **무엇을 보고 있는지
+  알 수가 없었다** — 숫자가 달라져도 자료가 변한 것인지 묶음이 바뀐 것인지
+  가릴 수 없다.
+
+  **다른 묶음은 여기 안 낸다.** 비교는 검토 화면의 `◉ SAM / ○ YOLO` 라디오가
+  하는 일이고(051), 목록에서까지 고르게 하면 "지금 보는 것" 이 화면마다 달라진다.
+  여기는 **읽는 표시**이지 고르는 자리가 아니다 — 누르면 고치는 자리로 간다.
+
+  쓰는 쪽:  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
+{% endcomment %}
+{% if review_batch %}
+  <a class="batchtag" href="{% url 'system_settings_ops' %}"
+     title="이 화면의 검출은 묶음 &quot;{{ review_batch }}&quot; 의 것입니다. 바꾸려면 누르세요 (시스템 설정 · 운영)"
+     ><span class="lbl">검토 중</span>{{ review_batch }}</a>
+{% else %}
+  {% comment %}
+    묶음이 안 켜져 있으면 뷰어는 검출을 **하나도** 안 그린다 (P10 3.6).
+    그때 아무 표시도 없으면 "자료가 없다" 로 읽혀 파이프라인을 돌리러 간다.
+  {% endcomment %}
+  <a class="batchtag none" href="{% url 'system_settings_ops' %}"
+     title="검토할 묶음이 정해져 있지 않아 검출이 하나도 안 보입니다 — 시스템 설정 · 운영에서 고르세요"
+     ><span class="lbl">검토할 묶음</span>없음</a>
+{% endif %}

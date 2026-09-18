@@ -1,0 +1,385 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `dataset_edit.html` 에서 왔다 — 노두 갈래(지점 유형·단면 위치)와 배율
+  덮어쓰기 칸(`scale.toml` 이 대신한다)을 뺐고, 관찰에 분획·분할·격자 칸 수, 시료에
+  건시료 무게를 더했다.
+{% endcomment %}
+{% block title %}{{ label }} 정보 편집 — ForGIA{% endblock %}
+{% block subtitle %}<a href="{% url 'index' %}">데이터셋</a> /
+  <a href="{% url 'dataset' slug %}">{{ label }}</a> / <b>정보 편집</b>{% endblock %}
+{% block content %}
+
+{% comment %}
+  폴더 이름에서 뽑을 수 있는 것(지역 코드·코어 코드·깊이)은 채워져 있고, 뽑을 수
+  없는 것(정식 명칭·좌표·수심)은 비어 있다. 코드만으로 "RS = 로스해" 를 단정하지
+  않는다 — 사람이 확인해서 채운다 (models.Site 머리말).
+
+  지역과 코어는 **여러 슬라이드가 공유한다.** 여기서 고치면 같은 코어의 다른 깊이
+  슬라이드에도 반영된다. 그래서 몇 개가 함께 바뀌는지 미리 보여 준다.
+{% endcomment %}
+
+{% if saved %}<div class="okbar">저장했습니다.{% if made %} {{ made }}{% endif %}</div>{% endif %}
+{% if errors %}<div class="errbar">{% for e in errors %}{{ e }}<br>{% endfor %}</div>{% endif %}
+
+{% comment %}
+  세 칸(슬라이드·코어·지역)을 탭으로 나눈다. **폼은 하나 그대로다** — 탭은
+  보이고 안 보이고만 가르고, 저장은 어느 탭에 있든 세 칸을 함께 보낸다.
+  칸을 폼 셋으로 쪼개면 지역을 고치려다 슬라이드에 적어 둔 것이 날아간다.
+
+  자바스크립트가 없으면 셋 다 펼쳐진 예전 모습이 된다 — `.tabbed` 를 JS 가
+  붙이고, 감추는 규칙은 그 클래스 아래에만 있다.
+{% endcomment %}
+<form method="post" class="propform" id="propform">
+  {% csrf_token %}
+
+  {% comment %}
+    층 넷을 탭으로 나눈다 — 관찰 / 시료 / 지점 / 지역. **폼은 하나 그대로다**:
+    탭은 보이고 안 보이고만 가르고, 저장은 어느 탭에 있든 넷을 함께 보낸다.
+  {% endcomment %}
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="slide" class="on">관찰
+      {% if slide.obs_badge %}<span class="dim">{{ slide.obs_badge }}</span>{% endif %}</button>
+    <button type="button" role="tab" data-tab="sample">시료
+      <span class="dim">{{ sample_code }}</span></button>
+    <button type="button" role="tab" data-tab="core">지점
+      <span class="dim">{{ core_code }}</span></button>
+    <button type="button" role="tab" data-tab="site">지역
+      <span class="dim">{{ site_code }}</span></button>
+  </nav>
+
+  <section data-pane="slide">
+    <h3>관찰</h3>
+    <p class="dim">이 관찰 하나에만 해당합니다 — 시료가 어느 지점의 무엇인지는 <b>시료</b> 탭에 있습니다.</p>
+    <label>이름
+      <input type="text" name="slide_name" value="{{ slide.name }}" maxlength="200">
+      <span class="hint">폴더 이름에서 가져왔습니다.</span></label>
+    <div class="two">
+      <label>분획 (µm)
+        <input type="number" step="any" min="0" name="fraction_um"
+               value="{{ slide.fraction_um|default_if_none:'' }}" placeholder="125">
+        <span class="hint">체 눈 크기. 폴더 이름의 <code class="mono">&gt;125um</code> 에서
+          읽었고, 없으면 여기 적습니다. 같은 시료를 분획을 달리해 픽킹하면 슬라이드가 둘입니다.</span></label>
+      <label>분할 (1/n)
+        <input type="number" step="1" min="1" name="split_denom"
+               value="{{ slide.split_denom|default_if_none:'' }}" placeholder="8">
+        <span class="hint">분획을 1/n 로 갈라 픽킹했으면 n. 전량이면 1. 비우면
+          "모른다" 이고 계수표가 환산을 하지 않습니다.</span></label>
+    </div>
+    <label>격자 칸 수
+      <input type="number" step="1" min="1" name="cells"
+             value="{{ slide.cells|default_if_none:'' }}" placeholder="60">
+      <span class="hint">픽킹 슬라이드의 칸 수. 시야 하나가 칸 하나이고 번호는
+        촬영 순서로 매겨집니다. 배율(µm/px)은 여기서 안 적습니다 — 사진 폴더의
+        <code class="mono">scale.toml</code> 이 맡습니다.</span></label>
+    <label>설명
+      <textarea name="description" rows="3"
+                placeholder="이 슬라이드에 대해 남길 것">{{ slide.description }}</textarea></label>
+
+    {% comment %}
+      관찰 — 같은 시료를 처리 방법을 달리해 여러 번 본 것. 폴더 접미사 `(1)` 이
+      번호를 정하고, 뜻은 여기서만 적는다. **폴더는 안 건드린다.**
+
+      숨김·집계 제외를 둘로 가른 이유는 `models.Slide` 머리말에 있다 — 안 보여도
+      조성에는 들어가야 하는 관찰이 있다.
+    {% endcomment %}
+    <fieldset class="obsbox">
+      <legend>관찰
+        {% if slide.obs_no %}<code class="mono">#{{ slide.obs_no }}</code>
+        {% else %}<span class="dim">접미사 없음</span>{% endif %}</legend>
+      <label>이름표
+        <input type="text" name="obs_label" value="{{ slide.obs_label }}"
+               maxlength="10" placeholder="산처리 · 체 20µm" size="14">
+        <span class="hint"><b>10자까지</b> — 한글로 다섯 자면 넉넉합니다.
+          짧아야 목록의 배지가 표를 밀지 않습니다. 폴더 이름 뒤의
+          {% if slide.obs_no %}<code class="mono">({{ slide.obs_no }})</code>{% else %}<code class="mono">(1)</code>{% endif %}
+          자리에 대신 보입니다. 폴더나 파일은 바뀌지 않습니다 —
+          이름표는 DB 에만 남습니다.
+          {% if not slide.obs_no %}이 슬라이드는 접미사가 없어(관찰 0) 이름표를
+            적지 않으면 목록에 아무 표시도 나오지 않습니다.{% endif %}</span></label>
+      <label class="ck"><input type="checkbox" name="hide_in_list"
+             {% if slide.hide_in_list %}checked{% endif %}>
+        <span>목록에서 숨기기
+          <span class="hint">표·카드·지도에서 안 보입니다. 목록 위의
+            <b>숨긴 항목 보기</b> 를 켜면 흐리게 나옵니다.
+            <b>합계는 그대로 들어갑니다</b> — 빼려면 아래를 함께 켜세요.</span></span></label>
+      <label class="ck"><input type="checkbox" name="exclude_from_totals"
+             {% if slide.exclude_from_totals %}checked{% endif %}>
+        <span>집계에서 제외하기
+          <span class="hint">합계 줄과 코어 머리줄의 숫자에서 뺍니다. 같은 시료를
+            여러 번 관찰했을 때 개체 수가 겹쳐 세지는 것을 막습니다.
+            줄 자체는 목록에 그대로 보이고 개체 수 옆에
+            <span class="exmark">*</span> 가 붙습니다.</span></span></label>
+    </fieldset>
+    <div class="ro">
+      <span>폴더</span><code class="mono">{{ slide.image_dir }}</code>
+      <span>상태</span><code class="mono">{{ slide.state }}{% if slide.state_note %} · {{ slide.state_note }}{% endif %}</code>
+      {% if um_per_pixel %}<span>배율</span><code class="mono">{{ um_per_pixel|floatformat:6 }} µm/px</code>{% endif %}
+      <span>시야 / 사진</span><code class="mono">{{ n_viewpoints }} / {{ n_frames }}</code>
+      {% comment %}
+        반입 이력을 되짚을 때 필요하다. 수정 시각이 비어 있으면 "이 칸이 생긴
+        뒤로 손댄 적이 없다" 는 뜻이다 — 지난 일을 지어내지 않는다.
+      {% endcomment %}
+      <span>반입</span><code class="mono">{{ slide.created_at|date:"Y-m-d H:i" }}</code>
+      <span>수정</span><code class="mono">{% if slide.updated_at %}{{ slide.updated_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}</code>
+      {% if slide.processed_at %}<span>자동 처리 완료</span><code class="mono">{{ slide.processed_at|date:"Y-m-d H:i" }}</code>{% endif %}
+    </div>
+  </section>
+
+  {% comment %}
+    시료 탭. **붙이기가 먼저다.** 예전에는 빈 칸뿐이라 이미 있는 곳에 넣으려면
+    코드를 정확히 맞혀 적어야 했고, 아래 칸만 적으면 **아무 일도 안 일어나고
+    "저장했습니다" 가 떴다** — `BP09-0901 (1)` 을 넣으려다 그렇게 한 번 헛돌았다.
+
+    고른 시료에 붙일 때는 시료·지점·지역 칸을 **저장에 쓰지 않는다**(views 의
+    `own`). 그 칸들은 소속이 없는 채로 그려져 전부 비어 있어서, 그대로 쓰면 남이
+    채워 둔 좌표·수심·해역이 지워진다 — 그 행을 쓰는 관찰 전부가 함께 당한다.
+  {% endcomment %}
+  <section data-pane="sample">
+    <h3>시료 <span class="dim">{{ sample_code }}</span></h3>
+    {% if no_sample %}
+      <p class="dim">이 관찰에는 <b>시료가 붙어 있지 않습니다.</b></p>
+      <label class="attach">기존 시료에 붙이기
+        <select name="attach_sample" id="attachsample">
+          <option value="">(고르지 않음 — 아래에 코드를 적어 새로 만듭니다)</option>
+          {% for c in sample_choices %}
+            <option value="{{ c.pk }}" {% if c.pk == sibling_sample_pk %}selected{% endif %}>
+              {{ c.site_code }} · {{ c.loc_code }} · {{ c.code }}{% if c.label %} ({{ c.label }}){% endif %} — 관찰 {{ c.n_slides }}개</option>
+          {% endfor %}
+        </select>
+        <span class="hint">고르면 그 시료에 그대로 매답니다. <b>시료·지점·지역의
+          속성은 건드리지 않습니다</b> — 아래 칸들은 비어 있어서 그대로 저장하면
+          이미 채워 둔 값이 지워집니다.
+          {% if sibling %}<br><b>같은 시료의 다른 관찰</b>
+            <code class="mono">{{ sibling.name }}</code> 이(가)
+            <code class="mono">{{ sibling.sample }}</code>
+            에 붙어 있어 그것을 미리 골라 두었습니다.{% endif %}</span></label>
+      <p class="dim sep">또는 — 아래 시료 코드와 <b>지점·지역 탭의 코드</b>를
+        모두 채우면 그 줄을 새로 만들어 붙입니다. <b>하나라도 비면 아무것도 붙지
+        않습니다.</b></p>
+    {% else %}
+      <p class="dim">같은 시료를 보는 관찰 <b>{{ n_slides_sample }}</b>개에 함께 반영됩니다.</p>
+    {% endif %}
+    <label>시료 코드
+      <input type="text" name="sample_code" value="{{ sample.code|default:'' }}" maxlength="64">
+      <span class="hint">폴더 이름의 가운데 토막 <code class="mono">71cm</code> 입니다.</span></label>
+    <div class="two">
+      <label>깊이 (cm)
+        <input type="number" step="0.1" name="depth_cm"
+               value="{{ sample.depth_cm|default_if_none:'' }}">
+        <span class="hint">해저면에서부터. 예: 369</span></label>
+      <label>건시료 무게 (g)
+        <input type="number" step="any" min="0" name="dry_weight_g"
+               value="{{ sample.dry_weight_g|default_if_none:'' }}">
+        <span class="hint">처리 전 건시료. 계수표가 개체/g 로 환산할 때 씁니다.</span></label>
+    </div>
+    <label>메모
+      <textarea name="sample_note" rows="2">{{ sample.note|default:'' }}</textarea></label>
+  </section>
+
+  <section data-pane="core">
+    <h3>지점 <span class="dim">{{ core_code }}</span></h3>
+    {% if no_core %}
+      <p class="dim">이 관찰에는 <b>지점이 붙어 있지 않습니다.</b>
+        위 시료 탭에서 골라 붙이거나, 아래에 지점 코드를 넣어 새로 만드세요.</p>
+    {% else %}
+      <p class="dim">이 지점의 시료 <b>{{ n_samples_loc }}</b>개에 함께 반영됩니다.</p>
+    {% endif %}
+    <label>지점 코드
+      <input type="text" name="core_code" value="{{ core.code|default:'' }}" maxlength="32">
+      <span class="hint">폴더 이름의 둘째 토막 <code class="mono">GC03</code> 입니다.</span></label>
+    <label>채취 방식
+      <input type="text" name="core_kind" value="{{ core.collect_kind|default:'' }}" maxlength="64"
+             placeholder="gravity core">
+      <span class="hint">GC 가 gravity core 를 뜻하는 일이 많지만 단정하지 않았습니다.</span></label>
+    <div class="two">
+      <label>위도
+        <input type="number" step="any" name="core_lat"
+               value="{{ core.lat|default_if_none:'' }}" placeholder="-74.5"></label>
+      <label>경도
+        <input type="number" step="any" name="core_lon"
+               value="{{ core.lon|default_if_none:'' }}" placeholder="171.2"></label>
+    </div>
+    <div class="two">
+      <label>수심 (m)
+        <input type="number" step="any" name="core_water_depth"
+               value="{{ core.water_depth_m|default_if_none:'' }}"></label>
+      <label>채취일
+        <input type="date" name="core_collected_at"
+               value="{{ core.collected_at|date:'Y-m-d' }}"></label>
+    </div>
+    <label>메모
+      <textarea name="core_note" rows="2">{{ core.note }}</textarea></label>
+  </section>
+
+  <section data-pane="site">
+    <h3>지역 <span class="dim">{{ site_code }}</span></h3>
+    {% if no_site %}
+      <p class="dim">이 슬라이드에는 <b>지역이 붙어 있지 않습니다</b> — 폴더 이름이
+        <code class="mono">&lt;지역&gt;-&lt;지점&gt; &lt;깊이&gt;cm</code> 꼴이 아니면
+        파이프라인이 못 붙입니다. 아래에 지역 코드를 넣으면 새로 만들어 붙입니다.
+        <b>이미 있는 코드를 넣으면 그 지역에 붙습니다.</b></p>
+    {% else %}
+      <p class="dim">같은 지역을 쓰는 슬라이드 <b>{{ n_slides_site }}</b>개에 함께 반영됩니다.</p>
+    {% endif %}
+    <label>지역 코드
+      <input type="text" name="site_code" value="{{ site.code }}" maxlength="32">
+      <span class="hint">폴더 이름의 앞 토막입니다. 예: RS23</span></label>
+    <label>권역
+      <select name="site_area">
+        {% for key, label in site_areas %}
+          <option value="{{ key }}" {% if site.area == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint">데이터셋 목록을 가르는 상위 구분입니다. 지금은 남극 하나입니다.</span></label>
+    <label>이름
+      <input type="text" name="site_name" value="{{ site.name }}" maxlength="200"
+             placeholder="Ross Sea 2023">
+      <span class="hint">정식 명칭. 코드만으로는 단정할 수 없어 비워 두었습니다.</span></label>
+    <label>해역
+      <input type="text" name="site_region" value="{{ site.region }}" maxlength="200"
+             list="region-hints" placeholder="로스해">
+      <datalist id="region-hints">
+        <option value="로스해"><option value="웨델해"><option value="아문센해">
+        <option value="벨링스하우젠해"><option value="남극반도">
+      </datalist>
+      <span class="hint">RS 는 로스해(Ross Sea), WAP 은 남극반도 서안(West
+        Antarctic Peninsula)일 가능성이 큽니다 — 확인하고 채우세요.</span></label>
+    <div class="two">
+      <label>위도
+        <input type="number" step="any" name="site_lat"
+               value="{{ site.lat|default_if_none:'' }}"></label>
+      <label>경도
+        <input type="number" step="any" name="site_lon"
+               value="{{ site.lon|default_if_none:'' }}"></label>
+    </div>
+    <label>메모
+      <textarea name="site_note" rows="2">{{ site.note }}</textarea></label>
+  </section>
+
+  <div class="formrow">
+    <a class="btn" href="{% url 'dataset' slug %}">취소</a>
+    <button type="submit" class="btn go">저장</button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var form = document.getElementById('propform');
+  var tabs = [].slice.call(form.querySelectorAll('.tabs button'));
+  var panes = [].slice.call(form.querySelectorAll('section[data-pane]'));
+  // JS 가 있을 때만 감춘다 — 없으면 셋 다 보이는 예전 화면 그대로다
+  form.classList.add('tabbed');
+
+  function show(name) {
+    var hit = false;
+    panes.forEach(function (p) {
+      var on = p.dataset.pane === name;
+      p.classList.toggle('on', on);
+      hit = hit || on;
+    });
+    if (!hit) { return show('slide'); }
+    tabs.forEach(function (b) { b.classList.toggle('on', b.dataset.tab === name); });
+    // 주소에 남긴다 — 새로 고침이나 저장 뒤에도 보던 칸으로 돌아온다
+    if (history.replaceState) {
+      history.replaceState(null, '', '#' + name);
+    }
+  }
+
+  tabs.forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.tab); });
+  });
+  show((location.hash || '#slide').slice(1));
+})();
+
+// 기존 시료를 고르면 시료·지점·지역 칸을 잠근다. **서버가 그 칸들을 이미 무시한다**
+// (views 의 `own`) — 여기서 잠그는 것은 화면이 **되는 것처럼 보이지 않게** 하기
+// 위해서다. 빈 칸이 살아 있으면 "여기 적으면 그 시료에 적히나" 로 읽히는데
+// 실제로는 안 적힌다.
+(function () {
+  var sel = document.getElementById('attachsample');
+  if (!sel) return;                      // 이미 시료가 붙은 관찰에는 없다
+  var form = document.getElementById('propform');
+  var panes = ['sample', 'core', 'site'].map(function (n) {
+    return form.querySelector('section[data-pane="' + n + '"]');
+  });
+  function apply() {
+    var on = !!sel.value;
+    panes.forEach(function (pane) {
+      if (!pane) return;
+      pane.classList.toggle('locked', on);
+      [].forEach.call(pane.querySelectorAll('input, textarea, select'),
+        function (el) { if (el !== sel) { el.disabled = on; } });
+    });
+  }
+  sel.addEventListener('change', apply);
+  apply();
+})();
+
+</script>
+
+<style>
+  .propform { max-width: 720px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: -1px; }
+  .tabs button {
+    font: inherit; font-size: 13px; padding: 7px 15px; cursor: pointer;
+    background: transparent; color: var(--dim); border: 1px solid transparent;
+    border-bottom: none; border-radius: 8px 8px 0 0;
+  }
+  .tabs button:hover { color: inherit; }
+  .tabs button.on {
+    background: var(--panel); color: inherit; border-color: var(--line);
+    position: relative; z-index: 1;
+  }
+  /* 탭이 붙은 칸은 위 모서리를 탭에 내준다 */
+  .propform.tabbed section { border-top-left-radius: 0; }
+  .propform.tabbed section[data-pane]:not(.on) { display: none; }
+  .propform section {
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 14px 16px 16px; margin-bottom: 14px; background: var(--panel);
+  }
+  .propform h3 { margin: 0 0 2px; font-size: 14px; }
+  .propform section > p.dim { margin: 0 0 12px; font-size: 12px; }
+  .propform label { display: block; margin-bottom: 11px; font-size: 12.5px; }
+  .propform input, .propform textarea, .propform select {
+    display: block; width: 100%; margin-top: 4px; box-sizing: border-box;
+    font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 5px;
+    background: var(--field-bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  .propform input:focus, .propform textarea:focus,
+  .propform select:focus { outline: none; border-color: var(--accent); }
+  .propform input:disabled, .propform textarea:disabled,
+  .propform select:disabled { opacity: .45; cursor: not-allowed; }
+  /* 기존 코어에 붙이는 칸. 아래 빈 칸들보다 먼저 읽혀야 해서 테두리를 준다 */
+  .propform label.attach {
+    border: 1px solid var(--accent); border-radius: 7px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .propform .sep { margin: 0 0 12px; padding-top: 2px; }
+  /* 잠긴 칸 무더기는 통째로 물러나 보여야 한다 — 낱개로 흐려 놓으면 무엇이
+     잠겼는지가 안 읽힌다 */
+  .propform section.locked > label:not(.attach),
+  .propform section.locked > .two,
+  .propform section.locked > p.sep { opacity: .5; }
+  .propform .hint { display: block; margin-top: 3px; font-size: 11px; color: var(--dim); }
+  .propform .two { display: flex; gap: 12px; }
+  .propform .two label { flex: 1; }
+  .propform .ro {
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+    margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line);
+    font-size: 11.5px; color: var(--dim); align-items: center;
+  }
+  .formrow { display: flex; gap: 9px; justify-content: flex-end; }
+  .btn {
+    font: inherit; font-size: 13px; padding: 6px 15px; border-radius: 6px;
+    cursor: pointer; text-decoration: none; display: inline-block;
+    background: var(--panel); color: inherit; border: 1px solid var(--line);
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.go { border-color: var(--accent); color: var(--accent); }
+  .okbar, .errbar {
+    padding: 9px 13px; border-radius: 6px; margin-bottom: 13px; font-size: 13px;
+  }
+  .okbar { background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-line); }
+  .errbar { background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-line); }
+</style>
+{% endblock %}

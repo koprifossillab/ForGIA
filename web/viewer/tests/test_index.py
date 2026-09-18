@@ -1,6 +1,6 @@
 """목록 화면. 빈 DB 에서도 뜨고, 층이 있으면 층대로 내려간다."""
 from .base import ForGIATestCase
-from .factories import make_slide, make_world
+from .factories import make_slide, make_layers
 
 
 class IndexTests(ForGIATestCase):
@@ -8,15 +8,15 @@ class IndexTests(ForGIATestCase):
         """0단계의 약속 — **빈 DB 로 목록이 뜬다.**"""
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertContains(r, "아직 슬라이드가 없다")
+        self.assertContains(r, "시료는 아직 없습니다")
         self.assertContains(r, "ForGIA")
 
     def test_layers_listed(self):
-        w = make_world()
+        w = make_layers()
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         html = r.content.decode()
-        for needle in ("RS23", "로스해 23", "GC03", "71cm", "231cm",
+        for needle in ("RS23", "Ross Sea", "GC03", "71 cm", "231 cm",
                        "RS23-GC03 71cm &gt;125um", "&gt;125 µm", "&gt;63 µm", "1/8"):
             self.assertIn(needle, html, needle)
         # 분획이 없는 관찰은 분획 배지를 안 낸다 — 빈 배지가 뜨면 "분획이 없는
@@ -24,13 +24,18 @@ class IndexTests(ForGIATestCase):
         self.assertNotIn(">None", html)
         self.assertEqual(w["slides"][2].fraction_badge, "")
 
-    def test_orphan_is_counted_not_hidden(self):
-        """소속을 잃은 관찰은 목록에서 사라진다 (DiaRUGA 063) — 대신 수를 적는다."""
-        make_world()
+    def test_orphan_is_shown_in_all_and_counted_in_area(self):
+        """소속을 잃은 관찰은 권역 탭에서 사라진다 (DiaRUGA 063) — `전체` 에는
+        "지점 미지정" 묶음으로 나오고, 권역 탭은 수를 적고 `전체` 로 보낸다."""
+        make_layers()
         make_slide(orphan=True, name="WAP13-GC47 116cm", fraction_um=None)
-        r = self.client.get("/")
-        self.assertContains(r, "소속이 없는 관찰 <b>1</b>")
+        r = self.client.get("/")                      # 기본이 전체다
+        self.assertContains(r, "지점 미지정")
+        self.assertContains(r, "WAP13-GC47 116cm")
+        r = self.client.get("/?area=ant")
         self.assertNotContains(r, "WAP13-GC47 116cm")
+        self.assertContains(r, "권역이 정해지지 않은 슬라이드가 1개")
+        self.assertContains(r, "?area=all")
 
     def test_theme_tokens_both_themes(self):
         """색 토큰은 어두운 쪽과 밝은 쪽 **둘 다** 채운다 (DiaRUGA 107·201).
