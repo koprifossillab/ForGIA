@@ -82,6 +82,8 @@ out = {
     "S_STATUS": d.get("status", ""),
     "S_VER": d.get("version", ""),
     "S_SLIDE": db.get("slide", -1),
+    "S_VIEWPOINT": db.get("viewpoint", -1),
+    # 교정(objectreview)은 3단계에서 온다 — 그때 이 자리로 되돌린다
     "S_REVIEW": db.get("objectreview", -1),
     "S_NOTES": " | ".join(d.get("notes") or []),
 }
@@ -115,12 +117,13 @@ elif [ -n "$PY" ]; then
 
     # 도메인 불변식. **빈 DB 를 물어도 /healthz 는 200 을 낼 수 있다** —
     # 마운트가 어긋나 컨테이너가 새 DB 를 만든 경우가 그렇고, 행 수만이 그것을
-    # 잡는다 (.guides/web/data-safety.md §8). objectreview 를 고른 이유는 그것이
-    # 이 프로젝트에서 **다시 만들 수 없는 유일한 자료**이기 때문이다.
-    if [ "${S_SLIDE:-0}" -gt 0 ] && [ "${S_REVIEW:-0}" -gt 0 ]; then
-        ok "자료 있음 (슬라이드 ${S_SLIDE} · 교정 ${S_REVIEW})"
+    # 잡는다 (.guides/web/data-safety.md §8). DiaRUGA 는 objectreview(다시 만들
+    # 수 없는 유일한 자료)를 보는데, 그 테이블은 **3단계에서 온다** — 그때까지는
+    # 시야(viewpoint)로 본다. `S_REVIEW` 가 0 이상이 되는 날 조건에 다시 넣을 것.
+    if [ "${S_SLIDE:-0}" -gt 0 ] && [ "${S_VIEWPOINT:-0}" -gt 0 ]; then
+        ok "자료 있음 (슬라이드 ${S_SLIDE} · 시야 ${S_VIEWPOINT} · 교정 ${S_REVIEW})"
     else
-        bad "자료가 비었다 (슬라이드 ${S_SLIDE:-?} · 교정 ${S_REVIEW:-?}) — DB 마운트를 볼 것"
+        bad "자료가 비었다 (슬라이드 ${S_SLIDE:-?} · 시야 ${S_VIEWPOINT:-?}) — DB 마운트를 볼 것"
     fi
 fi
 
