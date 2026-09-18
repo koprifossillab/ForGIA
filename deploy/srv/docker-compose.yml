@@ -1,0 +1,143 @@
+# from DiaRUGA v0.29.0 deploy/srv/docker-compose.yml — 이름·경로·포트만 바꿨다 (P01 §3.1)
+# ForGIA 배포 구성 — **/srv/ForGIA/docker-compose.yml 로 복사해 쓴다** (P03).
+#
+#   sudo cp deploy/srv/docker-compose.yml /srv/ForGIA/
+#   cd /srv/ForGIA && docker compose up -d web
+#
+# 이 파일은 **빌드하지 않는다.** 레지스트리에 올라간 이미지를 참조만 한다.
+# 이미지를 굽는 것은 저장소의 deploy/docker-compose.yml 이다 (phyloserver 와 같은 갈래).
+#
+# **판은 `.env` 의 `IMAGE_TAG` 에 있다.** 이 파일에 박지 않는 이유는 그래야
+# 저장소의 것과 `/srv` 의 것이 **글자 그대로 같아지기** 때문이다. 다르면 복사할
+# 때마다 어긋나고, 어느 쪽이 맞는지를 사람이 기억해야 한다.
+#
+# `.env` 는 prod 전용 상태다 — 배포가 이 파일을 **다시 만들지 않고 IMAGE_TAG 한
+# 줄만 제자리에서 고친다**(.guides/web/deployment.md §5). 통째로 덮어쓰면 비밀키가
+# 날아간다. 형제 프로젝트가 그렇게 크롤러 자격증명을 잃고 3.5개월을 몰랐다.
+#
+# `:?` 는 값이 없으면 멈추라는 뜻이다. 비었을 때 조용히 latest 로 흐르면
+# 무엇이 도는지 알 수 없게 된다.
+#
+# 컨테이너 안팎의 경로를 같게 두었다. 파이프라인 스크립트가 파일 경로를 인자로
+# 받으므로, 같은 명령을 호스트와 컨테이너 사이에 그대로 옮겨 쓸 수 있다.
+
+# **프로젝트 이름을 박아 둔다** (048). 안 적으면 compose 가 디렉토리 이름에서
+# 뽑는데, `/srv/ForGIA` 는 대문자가 섞여 있어 조용히 소문자로 깎인다. 그 암묵적
+# 변환에 컨테이너 이름이 매달리면 판이 바뀔 때 이름이 달라질 수 있다.
+name: forgia
+
+x-common: &common
+  # root 로 돌면 ForGIA.db 소유자가 바뀌어 호스트의 backup_db.py·check_db.py 가
+  # 못 쓰게 된다. 교정이 재생성 불가라 이건 양보할 수 없다.
+  user: "1000:1000"
+  env_file: [.env]
+  environment:
+    # **시간대를 호스트에 맞춘다.** 컨테이너 기본은 UTC 라, 그 안에서 뜬 사본
+    # 이름이 KST 이름과 아홉 시간 어긋난 채 한 디렉토리에 섞인다. 정리 규칙이
+    # 이름순 정렬(`sorted(glob)[:-keep]`)이라 그러면 **가장 새 사본을 지우고
+    # 옛것을 남긴다.** 로그 시각이 호스트와 어긋나는 것도 함께 사라진다.
+    TZ: Asia/Seoul
+
+  volumes:
+    # DB 가 있는 곳. **파일이 아니라 디렉토리째로** 물린다 — WAL 이 만드는
+    # -wal·-shm 형제가 컨테이너 안쪽에 생기면 호스트와 WAL 을 공유하지 못한다.
+    - /srv/ForGIA/db:/srv/ForGIA/db
+    # 사진·산출물
+    - /data3/ForGIA:/data3/ForGIA
+
+services:
+  web:
+    <<: *common
+    image: koprifossillab/forgia:${IMAGE_TAG:?IMAGE_TAG 를 .env 에 넣을 것}
+    entrypoint: ["/app/deploy/entrypoint-web.sh"]
+    ports:
+      # 루프백에만 붙인다. 바깥으로 나가는 문은 nginx 하나뿐이다
+      # (/etc/nginx/sites-enabled/ForGIA 이 :9090 을 받아 여기로 넘긴다).
+      - "127.0.0.1:8092:9090"
+    restart: unless-stopped
+    # 로그에 상한을 둔다 (2026-09-03). 기본값은 **크기 제한이 없어서**
+    # `/data3/docker` 아래로 무한히 큰다 — 지금은 하루 몇 백 줄이라 티가 안
+    # 나지만, 아무도 안 정해 둔 상태였을 뿐이다.
+    #
+    # **오래 남기려는 것이 아니다.** 컨테이너 로그는 몇 시간짜리 진단 도구이고
+    # (`guides/web/operations.md` 의 장애 대응 절), 남아야 하는 것은 DB·백업·
+    # `review/` 로 간다. 게다가 이 로그는 **컨테이너에 붙어 있어 `deploy.sh` 가
+    # 갈아 끼우면 새 파일로 시작한다** — 배포를 건너 살아남지 않는다. 오래
+    # 거슬러 볼 일은 nginx 쪽 access log 가 맡는다(2주쯤 돌아간다).
+    #
+    # 50 MB × 5 면 이 트래픽으로 몇 달치라, 상한이 진단을 방해하지 않는다.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  pipeline:
+    <<: *common
+    # **판이 web 과 따로 논다.** 처음에는 둘 다 IMAGE_TAG 를 썼는데, 파이프라인
+    # 이미지(6.92 GB)는 거의 안 바뀌고 뷰어는 자주 바뀐다. 뷰어 판을 올릴 때마다
+    # 없는 파이프라인 태그를 가리키게 되어 **폴러가 4시간 반 동안 멈췄다**
+    # (v0.1.1 로 올린 순간부터 524번 실패). 그때 로그는 "NAS 가 내려갔는가" 라고
+    # 적었다 — 원인과 전혀 다른 말이라 더 늦게 알았다.
+    image: koprifossillab/forgia-pipeline:${PIPELINE_TAG:?PIPELINE_TAG 를 .env 에 넣을 것}
+    profiles: ["manual"]        # `up` 에 딸려 뜨지 않게 — 일회성으로만 돌린다
+    environment:
+      TZ: Asia/Seoul
+      # **스크립트는 /srv 것이 돌고, Django 코드는 이미지 것을 쓴다** (100).
+      # dbtool 이 쓰던 문을 여기도 연다 — 스크립트 한 줄을 고칠 때마다 7.2 GB 를
+      # 다시 굽지 않아도 된다. 이미지를 다시 구워야 하는 것은 **의존성이 바뀔 때**
+      # 뿐이고, 그때는 판(PIPELINE_TAG)이 올라간다.
+      FORGIA_APP: /app
+    volumes:
+      - /srv/ForGIA/db:/srv/ForGIA/db
+      # 파이프라인·운영 스크립트. **읽기 전용** — 컨테이너가 고칠 것이 아니다
+      - /srv/ForGIA/scripts:/srv/ForGIA/scripts:ro
+      - /data3/ForGIA:/data3/ForGIA
+      # NAS 는 **읽기 전용**. 촬영 원본을 건드리지 않는다 (P01 §1)
+      - /nfs/temp-share/Forams:/nfs/temp-share/Forams:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # DB 를 만지는 일회성 스크립트는 **전부 이 문으로 들어간다.**
+  #
+  #   deploy/host/dbsync.sh check_db.py     # 저장소 → /srv/ForGIA/scripts
+  #   deploy/host/dbrun.sh  check_db.py     # 컨테이너 안에서 돌린다
+  #
+  # 호스트 venv 로도 같은 DB 를 열 수 있지만, 그러면 같은 파일을 두 벌의 환경이
+  # 만지게 된다 — 두 번 당했다. 컨테이너의 낡은 `models.py` 가 새 칼럼을 몰라
+  # NAS 반입이 죽었고(→ db_default), root 로 돈 컨테이너가 ForGIA.db 소유자를
+  # 바꿔 호스트 스크립트가 못 쓰게 됐다. 문이 하나면 둘 다 생기지 않는다.
+  #
+  # **`/app` 은 이미지 것 그대로 둔다.** 저장소를 /app 에 덮어 물리면 편집 중인
+  # 작업 트리로 DB 를 만지게 된다 — 막으려던 "환경이 두 벌" 을 다시 만드는 꼴이다.
+  # Django 도 모델 코드도 **뷰어 컨테이너가 쓰는 바로 그것**을 쓴다. 밖에서 물리는
+  # 것은 스크립트 파일뿐이고, 그것이 Django 를 어디서 찾을지는 FORGIA_APP 이
+  # 알려 준다.
+  #
+  # 그래서 **/srv 로 옮겨 놓은 것만 돌아간다.** 저장소에서 고친 것이 곧바로
+  # 프로덕션 DB 에 닿지 않는다 — docker-compose.yml 을 /srv 로 복사해 쓰는 것과
+  # 같은 갈래다(저장소는 만들고, /srv 는 돌린다).
+  #
+  # 무거운 파이프라인 이미지가 아니라 뷰어 이미지를 쓴다 — torch 가 필요 없다.
+  # GPU 를 쓰는 일은 pipeline 서비스로 간다.
+  dbtool:
+    <<: *common
+    image: koprifossillab/forgia:${IMAGE_TAG:?IMAGE_TAG 를 .env 에 넣을 것}
+    profiles: ["manual"]
+    entrypoint: ["python"]
+    working_dir: /srv/ForGIA/scripts
+    environment:
+      # `<<: *common` 의 environment 를 통째로 덮으므로 TZ 를 여기 다시 적는다.
+      # 빠뜨리면 이 컨테이너만 UTC 로 돌아 사본 이름이 어긋난다.
+      TZ: Asia/Seoul
+      FORGIA_APP: /app
+    volumes:
+      - /srv/ForGIA/db:/srv/ForGIA/db
+      - /data3/ForGIA:/data3/ForGIA
+      # 스크립트는 읽기만 한다
+      - /srv/ForGIA/scripts:/srv/ForGIA/scripts:ro
