@@ -2,9 +2,9 @@
 층 넷(`Site`·`Locality`·`Sample`·`Slide`)만 먼저 가져왔다 (P01 0단계).
 
 1단계에서 `RunBatch`·`Run`·`Viewpoint`·`Frame`·`Stack`·`Image` 가, 2단계에서
-`ThresholdSet`·`ClassDef`·`Setting`·`Detection`·`Candidate` 가 왔다. 나머지 —
-`ViewpointReview`·`ObjectReview`·`ForamObject`·`Taxon`(3단계) — 는 그 단계에서
-가져온다.
+`ThresholdSet`·`ClassDef`·`Setting`·`Detection`·`Candidate` 가, 3단계에서
+`ViewpointReview`·`ObjectReview`·`ForamObject`·`Taxon` 이 왔다. 도감·코어 자료
+(`Atlas*`·`CoreSeries`)는 5단계다.
 
 DiaRUGA 와 다른 자리 (P01 2절·5절):
 
@@ -22,7 +22,7 @@ DiaRUGA 에서 그대로 물려받은 규칙 둘은 그쪽 머리말 그대로�
 
 **1. 교정은 `Candidate` 가 아니라 `mask_key` 에 붙는다.** 검출을 다시 돌리면 후보
 행이 새로 생기므로 FK 로 매면 사람의 판단이 조인 실패로 사라진다. `mask_key`(bbox
-문자열)를 진짜 키로 두고 `candidate` 는 바인딩 결과로 채운다. (교정 표는 3단계)
+문자열)를 진짜 키로 두고 `candidate` 는 바인딩 결과로 채운다.
 
 **2. 검출은 덮어쓰지 않고 쌓는다.** `Detection.is_current` 가 뷰어가 볼 것을
 가리킨다. 교체 전후를 같은 시야로 비교해야 하기 때문이다.
@@ -854,3 +854,362 @@ class Candidate(models.Model):
     def __str__(self):
         return f"{self.mask_key} ({self.cls or '미분류'})"
 
+
+
+# ─────────────────────────────────────────────── 교정·동정 (3단계 · DiaRUGA P09·P12)
+#
+# `ViewpointReview`·`ObjectReview` 는 DiaRUGA v0.29.0 그대로다. `DiatomObject` 는
+# `ForamObject` 가 됐고 종명 문자열(`species`) 대신 **`Taxon` FK** 를 든다 —
+# 유공충은 종이 수십~수백이고 과-속-종 계층이 있어 자유 문자열로는 계수표가 안
+# 선다 (P01 2절 ③ · 5절 "분류 체계 정본은 WoRMS").
+
+
+class ViewpointReview(models.Model):
+    """시야 단위 교정 상태 — 완료·코멘트.
+
+    **완료는 묶음마다, 코멘트는 시야마다다** (DiaRUGA 073). `done` 은 "이 묶음이
+    낸 검출을 여기서 다 봤다" 라 묶음의 것이고, `note` 는 "이 시야가 이러이러하다"
+    라 묶음을 갈아도 참이다. 완료를 시야에 매달았더니 옛 묶음을 보고 붙인 완료가
+    새 묶음 화면에 그대로 붙어 **아무도 안 본 검출이 검토 완료로 보였다.**
+
+    **`batch` 가 `NULL` 인 행이 시야 코멘트를 든다.** 사람이 쓴 글이라 재생성
+    불가이고, 행 전체를 묶음에 매달면 묶음을 갈 때마다 사라진다.
+    """
+
+    viewpoint = models.ForeignKey(Viewpoint, on_delete=models.CASCADE,
+                                  related_name="reviews")
+    # `PROTECT` — 묶음을 지우면 그 회차의 검토 기록이 통째로 날아간다
+    batch = models.ForeignKey("RunBatch", null=True, blank=True,
+                              on_delete=models.PROTECT,
+                              related_name="viewpoint_reviews")
+    # 고칠 것이 없어 교정이 비어도 검토는 끝났을 수 있다 — 따로 남긴다
+    done = models.BooleanField(default=False)
+    note = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["viewpoint", "batch"],
+                condition=models.Q(batch__isnull=False),
+                name="uniq_vpreview_batch"),
+            # **NULL 끼리는 안 부딪힌다** — 시야 코멘트 행이 여럿 서는 것을
+            # 막으려면 조건을 뒤집은 제약이 따로 있어야 한다
+            models.UniqueConstraint(
+                fields=["viewpoint"],
+                condition=models.Q(batch__isnull=True),
+                name="uniq_vpreview_note"),
+        ]
+
+    def __str__(self):
+        if self.batch_id is None:
+            return f"{self.viewpoint} 코멘트"
+        return f"{self.viewpoint} [{self.batch}] {'완료' if self.done else '미완'}"
+
+
+class ObjectReview(models.Model):
+    """개체 단위 교정 — **그 판에서 그 마스크를 어떻게 봤는가.** 재생성 불가한 자료다.
+
+    `candidate` 는 바인딩 결과일 뿐이고 진짜 키는 **`(image, batch, mask_key)`**
+    다. `geom` 에 기하를 스스로 들고 있어 검출기가 바뀌어도 읽을 수 있다 —
+    지운 것까지 전부 저장한다(학습의 어려운 음성 표본이다). **회차가 돌면 이
+    표가 사실상 정답 자료 표가 된다** (DiaRUGA P09).
+
+    뜻으로는 `MaskJudgement` 다 — 남은 칸이 전부 *사람이 그 마스크에 대해 한
+    일*이다(지움·되살림·확인·기하 수정·손그림·대표 고르기). "이것이 무엇인가"
+    (분류·종)는 `ForamObject` 에 산다. DiaRUGA 는 개명 비용 때문에 이름을 두었고
+    여기서는 **같은 이름을 쓴다** — 그쪽 시험·문서를 그대로 옮기려고.
+
+    | 칸 | 무엇에 대한 판단인가 | 사는 곳 |
+    |---|---|---|
+    | `removed`·`accepted`·`geom` | 그 batch 가 낸 그 마스크가 틀렸다/맞다 | **여기** |
+    | `label`·`taxon`·`grade`·`pose`·`note` | 이 개체가 온전한 Globigerina 다 | **`ForamObject`** |
+    | 사람이 그린 마스크 | 여기 개체가 있다 | 이미지 — **어느 batch 에도 없다** |
+    """
+
+    BIND = [(b, b) for b in ("exact", "iou", "manual", "orphan")]
+    SOURCE = [(s, s) for s in ("engine", "manual")]
+
+    # 편의용 — 진짜 열쇠는 `(image, mask_key)` 다. `image.viewpoint` 와 어긋나면
+    # 안 된다
+    viewpoint = models.ForeignKey(Viewpoint, on_delete=models.CASCADE,
+                                 related_name="object_reviews")
+    # **어느 이미지를 보고 한 판단인가** (DiaRUGA P06). 시야마다 볼 이미지가 한
+    # 장이 아니다 — 프레임별 검출을 검토하면 `mask_key` 가 프레임끼리 겹친다
+    image = models.ForeignKey("Image", on_delete=models.CASCADE,
+                              related_name="object_reviews")
+    # **어느 검출을 보고 한 판단인가** (DiaRUGA P09 5.1). 없이 두면 엔진을 갈 때 옛
+    # 판단이 새 검출에 IoU 로 옮겨 붙는다 — 사람은 자기가 지우지 않은 것이
+    # 지워져 있는 것을 보게 된다. **`NULL` 은 사람이 그린 개체다.**
+    batch = models.ForeignKey("RunBatch", null=True, blank=True,
+                              on_delete=models.PROTECT,
+                              related_name="object_reviews")
+    mask_key = models.CharField(max_length=64)
+    candidate = models.ForeignKey(Candidate, null=True, blank=True,
+                                  on_delete=models.SET_NULL,
+                                  related_name="reviews")
+    bind_method = models.CharField(max_length=8, choices=BIND, default="orphan")
+    bind_score = models.FloatField(null=True, blank=True)
+    # {"bbox": [x,y,w,h], "polygon": [...]}
+    geom = models.JSONField(default=dict, blank=True)
+
+    # 사람이 그린 개체인가. `batch is None` 에서 파생시킬 수도 있지만 두 칸을
+    # 따로 두어 **검사가 둘을 대조할 수 있게** 한다 (`check_db` 8번).
+    # `db_default` 를 함께 준다 — `rebind` 가 파이프라인 컨테이너에서 이 표를 쓴다
+    source = models.CharField(max_length=8, choices=SOURCE, default="engine",
+                              db_default="engine")
+    # 엔진이 낸 기하를 사람이 고쳤다 — **회차별 수렴 지표**다 (DiaRUGA P09 5.7)
+    geom_edited = models.BooleanField(default=False, db_default=False)
+
+    # **이 판정이 가리키는 개체** (DiaRUGA P12). 여러 프레임에 걸쳐 잡힌 같은
+    # 개체가 이 FK 로 하나가 된다. **비어 있지 않다** — 판정 행이 생기는 순간
+    # 개체도 함께 생긴다(대개 1:1, 사람이 묶으면 N:1). **지운 마스크도 개체를
+    # 갖는다** — 지웠다 되살리는 사이에 묶음이 깨지지 않게
+    foram_object = models.ForeignKey("ForamObject", on_delete=models.CASCADE,
+                                     related_name="members")
+    # 이 개체의 얼굴 — 학습 자료로 뽑을 때, 목록에 보일 때 이 판을 쓴다.
+    # 개체마다 정확히 하나(0 은 저장 쪽이 막는다. DB 제약은 "둘 이상" 만 막는다)
+    is_rep = models.BooleanField(default=False, db_default=False)
+
+    # 둘을 한 칼럼으로 합치지 않는다 — "사람이 지웠다가 이긴다" 는 규칙이
+    # 두 값의 조합으로 표현된다
+    removed = models.BooleanField(default=False)
+    accepted = models.BooleanField(default=False)
+    # **검토 완료가 자동으로 붙이는 확인** — 마스크마다 누른 것이 아니라 완료
+    # 한 번이 남은 것 전부에 퍼진 것이다. `accepted`(엔진이 떨어뜨린 것을
+    # 사람이 되살림)와 축이 다르다. **학습에서 손그림과 같은 무게로 쓰면 안
+    # 된다.** `data.confirm_kept` 가 적는다. 화면은 이 칸을 모른다 — `/review`
+    # payload 에 없으므로 `save_review` 의 청소가 지우지 않도록 `keys` 에 얹는다
+    auto_confirmed = models.BooleanField(default=False, db_default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            # 한 개체는 한 이미지에서 하나다
+            models.UniqueConstraint(fields=["foram_object", "image"],
+                                    name="uniq_objreview_object_image"),
+            # 대표는 개체마다 하나
+            models.UniqueConstraint(fields=["foram_object"],
+                                    condition=models.Q(is_rep=True),
+                                    name="uniq_objreview_rep"),
+            # **batch 가 열쇠에 들어간다**
+            models.UniqueConstraint(
+                fields=["image", "batch", "mask_key"],
+                condition=models.Q(batch__isnull=False),
+                name="uniq_objreview_key"),
+            # 사람이 그린 것은 `batch` 가 NULL 이라 위 제약이 안 잡는다
+            models.UniqueConstraint(
+                fields=["image", "mask_key"],
+                condition=models.Q(batch__isnull=True),
+                name="uniq_objreview_manual"),
+        ]
+        indexes = [
+            models.Index(fields=["viewpoint", "bind_method"]),
+            models.Index(fields=["bind_method"]),
+            models.Index(fields=["image", "batch"]),
+            models.Index(fields=["source"]),
+            models.Index(fields=["foram_object"]),
+        ]
+
+    # **읽기 전용 통로다.** 분류·종은 `ForamObject` 에 살지만 읽는 자리가 많아
+    # 여기서 비춘다. 쓰기는 막혀 있다 — `o.label = …` 은 `AttributeError` 다.
+    # 부르는 쪽은 `select_related("foram_object")` 를 걸어야 한다
+    @property
+    def label(self) -> str:
+        return self.foram_object.label
+
+    @property
+    def species(self) -> str:
+        return self.foram_object.species
+
+    @property
+    def note(self) -> str:
+        return self.foram_object.note
+
+    def __str__(self):
+        marks = [n for n, v in (("삭제", self.removed), ("복구", self.accepted),
+                                ("메모", self.note)) if v]
+        return f"{self.mask_key}{' ★' if self.is_rep else ''} {'·'.join(marks) or '-'}"
+
+
+class ForamObject(models.Model):
+    """개체 하나 — **사람이 하나로 보는 대상** (DiaRUGA P12 의 `DiatomObject`).
+
+    초점면 3~5장에 같은 개체가 서너 번 잡히는데, 그것이 하나라는 것을 이 표가
+    말한다. 판정(`ObjectReview`)이 여기에 매달리고, **분류·종은 여기 산다** —
+    "이것이 Globigerina 다" 는 개체의 성질이지 어느 판에서 봤느냐의 성질이
+    아니다. 모든 판정이 개체를 갖는다(1:1) — **묶기 = 개체 둘을 합치는 것**,
+    **풀기 = 개체를 가르는 것**. 시야를 못 넘고 회차도 안 넘는다.
+
+    ## DiaRUGA 와 다른 것
+
+    - **`species` 문자열이 `taxon` FK 가 됐다.** 종이 수백이고 계층이 있어
+      자유 문자열로는 계수표(5단계)가 안 선다. 화면은 `Taxon` 자동완성으로
+      고르고, 목록에 없는 이름은 **거절한다** — WoRMS 전체를 반입해 두니
+      "없는 이름" 은 오기이거나 아직 반입 안 된 것이다. `species` 는 읽기
+      통로로 남겨 DiaRUGA 의 읽는 자리(카탈로그·내보내기)가 그대로 돌게 한다
+    - **자세(`POSE`)** 가 규조의 valve/girdle 이 아니라 유공충의 네 면이다
+    """
+
+    viewpoint = models.ForeignKey(Viewpoint, on_delete=models.CASCADE,
+                                  related_name="foram_objects")
+    # 어느 묶음의 검출을 보며 묶었나. PROTECT — 묶음을 지우려면 그 검출을 보며
+    # 만든 사람의 묶음부터 지워야 한다
+    batch = models.ForeignKey(RunBatch, on_delete=models.PROTECT,
+                              null=True, blank=True,
+                              related_name="foram_objects")
+    # **분류** — `ClassDef` 가 정한 형태·보존 목록에서 고른다 (온전·파손·파편·비유공충)
+    label = models.CharField(max_length=32, blank=True)
+    # **동정 결과** — `Taxon` 하나. `label` 과 축이 다르다: 저쪽은 "어떤 상태인가",
+    # 이쪽은 "무엇인가". **재생성 불가다** — 현미경을 보며 고른 것이고
+    # `export_review.py` 가 내보낸다. PROTECT — 쓰인 학명은 못 지운다(끄기만)
+    taxon = models.ForeignKey("Taxon", on_delete=models.PROTECT,
+                              null=True, blank=True, related_name="foram_objects")
+    # **자세는 개체의 성질이다** — 초점을 옮겨도 누운 자세는 그대로라 묶인
+    # 판들이 이 값을 나눠 갖는다. 묶을 때 값이 엇갈리면 거절한다. 완형에만 매긴다
+    POSE = [("umbilical", "umbilical view"), ("spiral", "spiral view"),
+            ("edge", "edge view"), ("apertural", "apertural view"),
+            ("other", "other position")]
+    pose = models.CharField(max_length=10, choices=POSE, blank=True,
+                            default="", db_default="")
+    # **등급 — 이 개체가 얼마나 좋은 표본인가.** 순서가 있다(A > B > C). 어느
+    # 판이 잘 보이는가는 `is_rep` 가 말한다 — 두 축을 갈라 둔다. **`A` 는
+    # 종까지 동정된 것을 뜻하되 매기는 사람의 기준이지 시스템이 막는 규칙이
+    # 아니다.** 완형에만 매긴다 — 화면이 칸을 감추고 서버가 다시 검사한다
+    GRADE = [("A", "A — 동정키도 완형도 잘 드러난다"),
+             ("B", "B — 완형이나 형태가 덜 드러난다 · 또는 상태가 나쁘나 동정키가 남았다"),
+             ("C", "C — 완형도 동정키도 잘 안 드러난다")]
+    grade = models.CharField(max_length=1, choices=GRADE, blank=True,
+                             default="", db_default="")
+    # **코멘트 — 이 개체를 두고 사람이 적는 말.** 재생성 불가. 묶을 때
+    # 엇갈려도 거절하지 않고 잇는다 (`data.merge_into_object`)
+    note = models.TextField(blank=True, default="", db_default="")
+    # **카탈로그 번호를 어느 판정에서 뽑나** (DiaRUGA P18). 번호는 파생이고
+    # 저장하는 것은 재료의 출처다. 대표(`is_rep`)와 축을 가른다 — 얼굴은 대표,
+    # 이름은 앵커. 묶어도 안 움직인다. 앵커 판정이 지워지면 `SET_NULL` 이고
+    # 남은 멤버 중 가장 오래된 것으로 넘긴다(`data.reanchor`)
+    anchor = models.ForeignKey("ObjectReview", on_delete=models.SET_NULL,
+                               null=True, blank=True,
+                               related_name="anchor_of")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["viewpoint"]),
+                   models.Index(fields=["viewpoint", "batch"]),
+                   models.Index(fields=["taxon"])]
+
+    # 읽기 통로 — DiaRUGA 의 `species` 문자열을 읽던 자리가 그대로 돈다.
+    # 부르는 쪽은 `select_related("taxon")` 을 건다. **쓰기는 이름을 `Taxon` 으로
+    # 찾아 앉힌다** (`Taxon.resolve`) — 없는 이름은 `ValueError` 다
+    @property
+    def species(self) -> str:
+        return self.taxon.name if self.taxon_id else ""
+
+    @species.setter
+    def species(self, name):
+        self.taxon = Taxon.resolve(name)
+
+    def __str__(self):
+        return f"obj#{self.pk} vp={self.viewpoint_id} ({self.members.count()})"
+
+
+# ─────────────────────────────────────────────────────────── 분류 체계 (Taxon)
+
+TAXON_RANK = [(r, r) for r in
+              ("Phylum", "Subphylum", "Class", "Subclass", "Order", "Suborder",
+               "Superfamily", "Family", "Subfamily", "Genus", "Subgenus",
+               "Species", "Subspecies", "Variety", "Forma")]
+# WoRMS 의 `status` 는 열 가지가 넘는다(accepted · unaccepted · junior subjective
+# synonym · taxon inquirendum · nomen dubium …). 목록으로 가두지 않고 **그대로
+# 적는다** — 유효한가는 `accepted` 하나로 가른다 (`Taxon.valid`)
+HABIT = [("", "—"), ("planktonic", "부유성"), ("benthic", "저서성")]
+
+
+class Taxon(models.Model):
+    """학명 하나 — **WoRMS 를 정본으로 한 계층** (P01 5절).
+
+    `migrate/import_worms.py` 가 WoRMS REST 로 유공충(AphiaID 1410) 아래를 통째로
+    반입한다. **쓰는 것만 `active` 로 켠다** — 자동완성은 켠 것만 내고, 목록을
+    사람이 따로 만들지 않는다. 동정에 한 번 쓰이면 저절로 켜진다
+    (`data.resolve_taxon`).
+
+    **행을 지우지 않는다.** `ForamObject.taxon` 이 PROTECT 로 잡고 있고, 반입을
+    다시 돌려도 `aphia_id` 로 맞춰 갱신만 한다. 이명(`unaccepted`)은
+    `accepted` FK 로 유효명을 가리킨다 — 화면은 이명을 골라도 받되 유효명을
+    옆에 보여준다. 반입 전에 사람이 손으로 넣은 행은 `aphia_id` 가 비어 있다.
+
+    `habit`(부유성/저서성)은 WoRMS 에 없다 — 과·목 수준에서 사람이 켜고
+    `import_worms.py --habit` 이 아래로 물려준다.
+    """
+
+    name = models.CharField(max_length=160)
+    rank = models.CharField(max_length=16, choices=TAXON_RANK, blank=True)
+    parent = models.ForeignKey("self", null=True, blank=True,
+                               on_delete=models.SET_NULL, related_name="children")
+    aphia_id = models.IntegerField(null=True, blank=True, unique=True)
+    status = models.CharField(max_length=40, default="accepted", db_default="accepted")
+    # 이명일 때 유효명. 유효명 자신은 비어 있다
+    accepted = models.ForeignKey("self", null=True, blank=True,
+                                 on_delete=models.SET_NULL, related_name="synonyms")
+    authority = models.CharField(max_length=160, blank=True, default="", db_default="")
+    habit = models.CharField(max_length=12, choices=HABIT, blank=True,
+                             default="", db_default="")
+    # 자동완성에 낼 것. 동정에 쓰이면 저절로 켜진다
+    active = models.BooleanField(default=False, db_default=False)
+    # 화석종인가 (WoRMS `isExtinct`). 남극 코어라 화석도 본다
+    extinct = models.BooleanField(default=False, db_default=False)
+    note = models.TextField(blank=True, default="", db_default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "taxa"
+        indexes = [models.Index(fields=["active", "name"]),
+                   models.Index(fields=["rank"])]
+        constraints = [models.UniqueConstraint(fields=["name", "authority"],
+                                               name="uniq_taxon_name_authority")]
+
+    @classmethod
+    def resolve(cls, name, *, activate: bool = True):
+        """이름 → 행. 빈 이름은 `None`(종을 비운다). **없는 이름은 거절한다**
+        (`ValueError`) — WoRMS 전체가 반입돼 있으니 없는 이름은 오기이거나 반입이
+        안 된 것이고, 조용히 새 행을 만들면 같은 종이 두 줄이 된다(DiaRUGA 의
+        자유 문자열이 겪은 일). 같은 이름이 여럿이면 유효명 → 작은 `aphia_id`
+        차례. `"이름 명명자"` 로 적으면 그 행만 맞는다. `activate` 면 켠다.
+        """
+        import re
+        from django.db.models import Case, When
+        name = re.sub(r"\s+", " ", str(name or "")).strip()
+        if not name:
+            return None
+        qs = cls.objects.filter(name__iexact=name)
+        if not qs.exists():
+            for i in range(len(name), 0, -1):
+                if name[i - 1] != " ":
+                    continue
+                qs = cls.objects.filter(name__iexact=name[:i - 1],
+                                        authority__iexact=name[i:])
+                if qs.exists():
+                    break
+        row = (qs.order_by(Case(When(status="accepted", then=0), default=1),
+                           "aphia_id", "pk").first())
+        if row is None:
+            raise ValueError(f"목록에 없는 학명이다: {name}")
+        if activate and not row.active:
+            cls.objects.filter(pk=row.pk).update(active=True)
+            row.active = True
+        return row
+
+    @property
+    def worms_url(self) -> str:
+        return (f"https://www.marinespecies.org/aphia.php?p=taxdetails&id={self.aphia_id}"
+                if self.aphia_id else "")
+
+    @property
+    def valid(self) -> "Taxon":
+        """유효명 — 이명이면 `accepted`, 아니면 자기 자신."""
+        return self.accepted if self.accepted_id else self
+
+    def __str__(self):
+        return self.name

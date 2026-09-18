@@ -138,6 +138,15 @@ class _SafeRootsMixin:
         finally:
             cls._restore()
 
+    def setUp(self):
+        # 분류표 캐시(`data._class_rows`)를 비운다 — 앞 시험이 `ClassDef` 를
+        # 고쳤으면(`test_new_class_wiring`) 그 표가 다음 시험에 남는다. DiaRUGA 는
+        # 시험마다 `make_classes()` 를 불러 비웠는데 여기는 0004 가 심은 넷을
+        # 그대로 쓰므로 바닥이 한 번씩 비워 준다
+        from .. import data
+        data.invalidate_classes()
+        super().setUp()
+
     @classmethod
     def _restore(cls):
         for k, v in getattr(cls, "_saved", {}).items():

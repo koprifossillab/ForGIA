@@ -83,7 +83,6 @@ out = {
     "S_VER": d.get("version", ""),
     "S_SLIDE": db.get("slide", -1),
     "S_VIEWPOINT": db.get("viewpoint", -1),
-    # 교정(objectreview)은 3단계에서 온다 — 그때 이 자리로 되돌린다
     "S_REVIEW": db.get("objectreview", -1),
     "S_NOTES": " | ".join(d.get("notes") or []),
 }
@@ -118,8 +117,10 @@ elif [ -n "$PY" ]; then
     # 도메인 불변식. **빈 DB 를 물어도 /healthz 는 200 을 낼 수 있다** —
     # 마운트가 어긋나 컨테이너가 새 DB 를 만든 경우가 그렇고, 행 수만이 그것을
     # 잡는다 (.guides/web/data-safety.md §8). DiaRUGA 는 objectreview(다시 만들
-    # 수 없는 유일한 자료)를 보는데, 그 테이블은 **3단계에서 온다** — 그때까지는
-    # 시야(viewpoint)로 본다. `S_REVIEW` 가 0 이상이 되는 날 조건에 다시 넣을 것.
+    # 수 없는 유일한 자료)를 보는데, ForGIA 는 아직 교정이 쌓이기 전이라 0 이
+    # 정상이다 — 시야(viewpoint)로 보고 교정 수는 적기만 한다. **교정이 쌓인
+    # 뒤에는 `S_REVIEW -gt 0` 을 조건에 넣을 것** — 그때부터 그것이 "DB 가 진짜인가"
+    # 의 열쇠다.
     if [ "${S_SLIDE:-0}" -gt 0 ] && [ "${S_VIEWPOINT:-0}" -gt 0 ]; then
         ok "자료 있음 (슬라이드 ${S_SLIDE} · 시야 ${S_VIEWPOINT} · 교정 ${S_REVIEW})"
     else

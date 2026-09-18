@@ -24,7 +24,7 @@
   </p>
   {% if batches %}
   <table class="mtab">
-    <thead><tr><th>묶음</th><th>시야</th><th>빈 화면</th><th>이미지</th>
+    <thead><tr><th>묶음</th><th>코드</th><th>시야</th><th>빈 화면</th><th>이미지</th>
                <th>개체</th><th></th></tr></thead>
     <tbody>
       {% for b in batches %}
@@ -32,6 +32,20 @@
         <td><b>{{ b.batch.label }}</b>
             {% if b.on %} <span class="nowtag">검토 중</span>{% endif %}
             {% if b.batch.note %}<div class="dim" style="font-size:11px">{{ b.batch.note|truncatechars:90 }}</div>{% endif %}</td>
+        {% comment %}
+          카탈로그 번호의 꼬리 (`catalog.py`). **비면 그 묶음의 개체는 번호가 없다** —
+          `check_db` 9번이 센다. 개체가 있는 묶음은 바꾸지 말 것 — 번호가 이미
+          적혔을 수 있다 (칸을 잠그지는 않는다: 처음 정하는 길이 이것뿐이다)
+        {% endcomment %}
+        <td>
+          <form method="post" class="inline" title="{% if b.n_objects %}개체 {{ b.n_objects }}개가 이 코드로 번호를 받았을 수 있습니다 — 바꾸면 적어 둔 번호가 낡습니다{% else %}카탈로그 번호의 꼬리 (영문·숫자 여덟 자 안){% endif %}">{% csrf_token %}
+            <input type="hidden" name="act" value="batch_code">
+            <input type="hidden" name="batch" value="{{ b.batch.pk }}">
+            <input type="text" name="code" value="{{ b.batch.code }}" maxlength="8" size="5"
+                   class="code{% if not b.batch.code %} missing{% endif %}" placeholder="없음">
+            <button type="submit">적기</button>
+          </form>
+        </td>
         <td class="num">{{ b.n_views }}</td>
         {% comment %} 빈 화면이 생기는 것은 경고다 — 색으로 드러낸다 {% endcomment %}
         <td class="num">{% if b.n_blank %}<b style="color:var(--warn)">{{ b.n_blank }}</b>{% else %}0{% endif %}</td>
@@ -121,6 +135,8 @@
         <option value="{{ b.pk }}">{{ b.label }}</option>
         {% endif %}{% endfor %}
       </select></label>
+    <label>카탈로그 코드
+      <input type="text" name="code" maxlength="8" size="6" placeholder="비우면 이름에서"></label>
     <label class="wide">메모
       <input type="text" name="note" placeholder="무엇을 바꿔 돌리는 회차인가"></label>
     <button type="submit">만들기</button>
@@ -201,5 +217,13 @@
     border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; }
   .recipe .rfoot { margin-top: 12px; display: flex; align-items: center; gap: 10px;
                    font-size: 12px; }
+  /* 카탈로그 코드 칸 — 표 안의 작은 폼. 비어 있으면 경고색 테두리 */
+  .mtab input.code { width: 5.5em; font: inherit; font-size: 12.5px; padding: 2px 6px;
+                     background: var(--field-bg); color: var(--fg);
+                     border: 1px solid var(--line); border-radius: 5px; text-transform: uppercase; }
+  .mtab input.code.missing { border-color: var(--warn); }
+  .mtab form.inline button { font: inherit; font-size: 11.5px; padding: 2px 7px; cursor: pointer;
+                             background: var(--panel); color: inherit;
+                             border: 1px solid var(--line); border-radius: 5px; }
 </style>
 {% endblock %}

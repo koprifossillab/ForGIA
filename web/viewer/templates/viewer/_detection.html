@@ -1,0 +1,453 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_detection.html` 에서 왔다 — 종명 칸이 `Taxon` 자동완성(`/api/taxon/suggest`)을 문다.
+{% endcomment %}
+{% load viewer_extras %}
+{% comment %}
+  det: 검출 payload, base: 검출을 돌린 이미지 rel, uid: DOM 충돌 방지용
+  stack·frames 는 바깥 컨텍스트에서 그대로 받아 캐러셀에 쓴다.
+
+  여러 줄 주석은 {% comment %} 로 쓴다 — {# #} 는 한 줄짜리만 주석이고
+  줄을 넘기면 주석으로 인식되지 않아 화면에 그대로 나온다.
+{% endcomment %}
+{% comment %}
+  탭 이름은 **무엇을 보고 있는가** 를 끝까지 적는다 — 화면(`title`)과 지금 띄운
+  판(`shot`)을 함께. 예전에는 "합성본" 한 마디였고, 캐러셀에서 프레임을 골라도
+  그대로 남아 있었다. 지금 무엇을 보는지가 화면 어디에도 없었다는 뜻이다.
+  판을 갈아 끼울 때 JS(`paint`)가 뒷부분만 다시 쓴다 — 앞머리는 `data-prefix` 에
+  들고 있는다.
+{% endcomment %}
+<div class="dettabs" id="tabs-{{ uid }}">
+  <button type="button" class="on" data-pane="view" id="tabtitle-{{ uid }}"
+          data-prefix="{{ title }}">{{ title }}{% if shot %} - {{ shot|cut:"Snap-" }}{% endif %}</button>
+  {% comment %}
+    검출 엔진 고르기 (DiaRUGA 051). 예전에는 `/engine/` 이라는 다른 화면으로 나가야
+    했다 — 나갔다 돌아오면 어느 시야를 보고 있었는지 잃었고, 비교는 같은
+    자리를 번갈아 보는 일이다. 시야는 그대로 두고 개체만 바뀐다.
+
+    **고르는 것과 저장되는 것은 다르다.** 현재 검출(SAM2)만 교정이 저장되고
+    나머지는 읽기 전용이다 — 칸마다 그렇게 적고, 사진 가운데 위에 한 번 더
+    크게 알린다(`.roflag`).
+  {% endcomment %}
+  {% if engines %}
+  <div class="engpick" id="engpick-{{ uid }}">
+    {% for e in engines %}
+      <label title="{{ e.batch_label }}{% if e.n_batches > 1 %} (이 엔진의 묶음 {{ e.n_batches }}개 중 최근 것){% endif %} · 개체 {{ e.n }}개 — 엔진이 낸 그대로 셉니다(사람의 교정은 빼고).{% if e.editable %} 교정이 저장되는 화면입니다{% else %} 읽기 전용입니다{% endif %}">
+        <input type="radio" name="eng-{{ uid }}" value="{{ e.url }}"
+               {% if e.key == engine_now.key %}checked{% endif %}>
+        {{ e.label }}<span class="n">{{ e.n }}</span>{% if not e.editable %}<span class="ro">읽기 전용</span>{% endif %}
+      </label>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <button type="button" data-pane="list">개체 목록 <span class="dim" id="tabcount-{{ uid }}">{{ det.n_candidates }}</span></button>
+  <span class="tabmeta">
+    {% comment %}
+      분류 이름을 여기 적지 않는다 — ClassDef 에 속을 더해도 이 줄만 옛 목록으로
+      남는다(Chaetoceros 를 넣고 실제로 그랬다). data.py 가 표 순서대로 만든다.
+    {% endcomment %}
+    후보 {{ det.n_candidates }}개{% if det.counts_list %} ({% for c in det.counts_list %}{{ c.label }} {{ c.n }}{% if not forloop.last %}, {% endif %}{% endfor %}){% endif %} ·
+    원시 {{ det.n_raw_masks }}{% if det.n_sized %} → 크기통과 {{ det.n_sized }}{% endif %} ·
+    {{ det.um_per_pixel|floatformat:4 }} µm/px{% if det.um_per_pixel_source %}<span class="dim"> ({{ det.um_per_pixel_source }})</span>{% endif %}
+  </span>
+</div>
+
+{% if base %}
+<section data-pane="view" id="pane-view-{{ uid }}">
+{% comment %}
+  사진과 코멘트 목록을 나란히 둔다. 목록은 코멘트가 하나라도 있을 때만 나타난다
+  — 늘 자리를 차지하면 사진이 그만큼 좁아진다(JS 가 여닫는다).
+{% endcomment %}
+<div class="detrow" id="detrow-{{ uid }}">
+{% comment %}
+  **저장은 `(slug, gid)` 로 시야를 짚는다.** `stem` 은 이름이라 슬라이드끼리
+  겹치는데(프레임 이름 143종), 그것 하나로 찾다가 12개 화면이 다른 슬라이드의
+  시야를 열고 있었다 — 거기서 저장하면 남의 교정이 통째로 지워진다. 주소는
+  겹치지 않고, 화면이 이미 알고 있다.
+{% endcomment %}
+<div class="detview" id="dv-{{ uid }}"
+     data-w="{{ det.size.0 }}" data-h="{{ det.size.1 }}" data-stem="{{ det.stem }}"
+     data-slug="{{ slug }}" data-gid="{{ id }}"
+     {% comment %}
+       카탈로그로 가는 길과 그 저장 문 (DiaRUGA 149·183). **주소는 서버가 만든다** —
+       절대경로를 박으면 서브경로(`/DiaRUGA/`)에서 어긋난다.
+
+       **오프라인 파일에는 안 싣는다** (DiaRUGA P25 3.3). 갈 화면이 없는 링크는 놓지
+       않고, 저장은 어차피 `env` 가 기록으로 받는다.
+     {% endcomment %}
+     {% if not offline %}data-catalog-url="{% url 'catalog' slug %}"
+     data-cat-save-url="{% url 'save_catalog' slug %}"{% endif %}
+     {% comment %}
+       **저장이 어느 이미지로 갈지** (DiaRUGA P09 1단계). 캐러셀이 판을 바꾸면 JS 가
+       따라 바꾼다. 비어 있으면 안 보낸다 — 서버가 대표 이미지로 받는다(옛
+       화면과 같은 동작이라 배포 중에 열려 있던 탭이 안 깨진다).
+
+       **`{# #}` 로 쓰면 안 된다** — 한 줄짜리 주석이라 여러 줄이면 화면에
+       그대로 샌다(CLAUDE.md). 실제로 그렇게 썼다가 시험이 잡았다.
+     {% endcomment %}
+     data-image="{{ image_id|default_if_none:'' }}">
+  <div class="canvas" id="canvas-{{ uid }}">
+    {% comment %}
+      **오프라인은 빈 자리로 두고 화면이 붙인다** (DiaRUGA P25) — 사진이 파일 안에
+      base64 로 실려 있다. `src=""` 로 두면 브라우저가 **이 파일 자신을** 다시
+      받아 오므로(빈 문자열은 현재 주소다) 자리 채우개를 하나 넣는다.
+    {% endcomment %}
+    <img id="img-{{ uid }}" src="{% if offline %}{{ blank_px }}{% else %}{% thumb base 1600 %}{% endif %}"
+         alt="{{ title }}" draggable="false">
+    <svg class="masks" id="masks-{{ uid }}"
+         viewBox="0 0 {{ det.size.0 }} {{ det.size.1 }}" preserveAspectRatio="none"></svg>
+  </div>
+  <div class="band" id="band-{{ uid }}"></div>
+  <div class="zoomtag" id="zoom-{{ uid }}">100%</div>
+
+  {% comment %}
+    읽기 전용 표시. **JS 가 켠다** — 서버가 내려 준 `ro-<uid>` 표식 하나를
+    보고 켜므로, 저장을 막는 조건과 화면에 적히는 말이 같은 곳에서 갈린다.
+    둘을 따로 두면 "막혀 있는데 안 적혀 있다"(또는 그 반대)가 난다.
+  {% endcomment %}
+  <div class="roflag" id="roflag-{{ uid }}" hidden>Read only
+    <span>참고용입니다 — 교정은 저장되지 않습니다</span></div>
+
+  {% comment %}
+    링크가 짚어 온 개체를 표시했다는 말 (DiaRUGA 118). **표시만으로는 부족하다** —
+    노란 테두리가 하나 더 있는 것을 보고 그것이 "누르고 온 그 개체" 인지,
+    아니면 이미 골라 둔 것인지 화면에서 갈리지 않는다.
+
+    **못 찾았을 때도 여기에 적는다.** 아무 말 없이 표시가 없으면 사람은 이
+    시야를 훑으며 그 개체를 계속 찾는다 — 재검출로 키가 바뀌어 이미 없는
+    개체일 수 있다.
+
+    `.roflag` 와 같은 자리(사진 위)를 쓰되 아래쪽에 둔다. 겹치면 읽기 전용
+    표시를 가리는데, 그쪽은 **저장이 안 되는 화면임을 알리는** 말이라 무엇에도
+    가려지면 안 된다.
+  {% endcomment %}
+  <div class="hlflag" id="hlflag-{{ uid }}" hidden><span id="hltext-{{ uid }}"></span>
+    {% comment %}
+      **확대는 사람이 누를 때만 한다.** 도착하자마자 배율을 올리면 사람이
+      정하지 않은 배율에서 화면이 시작되고, 그 상태가 "지금 어디를 보고 있나"
+      를 한 번 더 물어보게 만든다. 큰 개체는 표시만으로 충분해서 아예 안
+      누르는 길도 있어야 한다 (사용자 2026-08-13).
+
+      **못 찾았을 때는 없다** — 갈 곳이 없는 버튼을 내보이면 안 된다.
+    {% endcomment %}
+    <button type="button" id="hlzoom-{{ uid }}" hidden></button></div>
+
+  {# 레이어 토글 — 사진을 가리지 않고 원본을 확인할 수 있어야 한다 #}
+  <div class="layers" id="layers-{{ uid }}">
+    <label><input type="checkbox" data-layer="box" checked> bbox</label>
+    <label><input type="checkbox" data-layer="mask" checked> mask</label>
+    {% comment %}
+      mask 를 켰을 때만 뜻이 있는 선택지라 mask 가 꺼지면 같이 감춘다.
+      끄면 테두리만 그린다 — 채우면 정작 "이게 개체인가" 를 볼 수 없을 때가 있다.
+    {% endcomment %}
+    <label class="fillopt"><input type="checkbox" data-layer="fill" checked> fill</label>
+    {% comment %}
+      탈락 후보 레이어. 기본은 꺼 둔다 — 시야당 100개가 넘어 켜 두면 사진이
+      묻힌다. 재현율을 눈으로 볼 때, 그리고 누락을 되살릴 때 켠다.
+    {% endcomment %}
+    <label title="문턱에서 떨어진 후보를 빨간 점선 테두리로 보여준다. 켜 두면 클릭이 탈락 후보를 먼저 집는다 — 검출 개체 뒤에 겹친 것도 고를 수 있다 (검출 개체를 고르려면 Shift+클릭)">
+      <input type="checkbox" data-layer="reject"> 탈락
+      <span class="dim">{{ det.rejected|length }}</span></label>
+  </div>
+
+  {% comment %}
+    **마스크 그리기는 홀로 사진 오른쪽 위에 둔다** (194 · 사용자 2026-09-07).
+    검토하는 동안 손이 자주 가는 것은 이것 하나이고, 나머지와 한 줄에 섞여
+    있으면 폰에서 두 줄짜리 단추 무리에 묻힌다. 글자를 떼고 연필만 남긴다 —
+    표적이 커지고 사진을 덜 가린다.
+
+    **`#tools-` 상자 밖으로 나갔다.** 도구 배선이 그 상자에 위임돼 있으므로
+    `_detview_js.html` 이 두 자리를 함께 듣고, 눌린 표시(`syncDrawBtn`)도
+    `.detview` 안에서 찾는다 — 한쪽만 고치면 **켜 놓고 잊는 실수**를 막으려고
+    둔 그 표시가 조용히 안 붙는다.
+  {% endcomment %}
+  <div class="drawtool" id="drawtool-{{ uid }}">
+    <button type="button" data-act="draw" title="마스크 그리기 (D)"
+            aria-label="마스크 그리기">✎</button>
+  </div>
+
+  {% comment %}
+    교정 도구는 사진 위에 얹는다. 스케일바와 마찬가지로 canvas 가 아니라
+    detview 의 자식이라 확대·이동 변환을 받지 않고 늘 같은 자리에 있다.
+
+    **넷은 접어 두었다** (194 · 사용자 2026-09-07: "전체선택, 해제, 배율초기화,
+    삭제분 숨기기 이런건 뭐 큰 의미 없으니"). 검토 한 시야를 보는 동안 한 번도
+    안 누르는 것들이라 늘 펼쳐 두면 자리만 먹는다 — 폰에서는 그 자리가 사진이다.
+    **감추는 것이 아니라 접는 것이다**: `⋯` 이 늘 보이고 한 번 누르면 넷이 다
+    나온다(051 이 말하는 "화면에서 아예 빼는 것" 은 할 수 없을 때 하는 일이고,
+    이것들은 할 수 있다).
+
+    펼친 판은 `position: absolute` 다 — 펼칠 때 아래 것들이 밀리면 방금 보던
+    자리를 잃는다.
+  {% endcomment %}
+  <div class="tools" id="tools-{{ uid }}">
+    <button type="button" data-act="undo">↶ 실행취소</button>
+    <button type="button" class="danger" data-act="clear">검토 전체 초기화</button>
+    <details class="moretools">
+      <summary title="그 밖의 도구">⋯</summary>
+      <div class="morebox">
+        <button type="button" data-act="all">전체 선택</button>
+        <button type="button" data-act="none">해제</button>
+        <button type="button" data-act="reset">배율 초기화</button>
+        <button type="button" data-act="ghosts">삭제분 숨기기</button>
+      </div>
+    </details>
+  </div>
+
+  {% comment %}
+    검토 완료 표시. 어느 시야를 다 봤는지 알 수 없으면 재현율을 실측할 수도,
+    학습 데이터로 쓸 시야를 고를 수도 없다. review/*.json 에 저장한다.
+  {% endcomment %}
+  <div class="donebar" id="donebar-{{ uid }}">
+    <button type="button" id="done-{{ uid }}"
+            class="{% if det.review_done %}on{% endif %}"></button>
+  </div>
+
+  <div class="scalebar" id="sb-{{ uid }}"><i></i><span></span></div>
+</div>
+
+{% comment %}
+  사진 오른쪽 칸. 화면 조정과 **시야 코멘트**가 있다.
+
+  **개체 코멘트 목록은 0036 에서 걷었다** (사용자, 2026-08-12). 개체를 두고
+  하는 말은 개체 카탈로그에서 적기로 했고, 적지 않는 목록을 여기 두면 *어디서
+  적는 것인지*가 두 자리로 갈린다. 비는 자리는 Diadiction(DiaRUGA P14)이 쓴다.
+{% endcomment %}
+<aside class="notes" id="notes-{{ uid }}">
+  {% comment %}
+    화면 조정 — 밝기·대비. **사진에만 건다**(`filter` 를 `<img>` 에만).
+    마스크는 형제 `<svg>` 라 안 물든다: 마스크 색이 분류를 나타내는 판정 근거라
+    사진을 어둡게 했다고 함께 어두워지면 무엇으로 지정했는지가 안 읽힌다.
+
+    **DB 에 안 남는다.** 보는 방식이지 자료가 아니다 — 원본 화소는 그대로이고,
+    계측·판정은 서버가 원본으로 한다. 값은 브라우저에만 남겨(`localStorage`)
+    시야를 옮겨도 따라온다. 슬라이드 하나를 훑는 동안 한 번만 맞추면 된다.
+  {% endcomment %}
+  {% comment %}
+    **폰에서는 접고 시작한다** (194 · 사용자 2026-09-07). 밝기·대비는 슬라이드
+    하나를 훑는 동안 한 번 맞추고 마는 것인데, 좁은 화면에서는 이 두 줄이
+    사진과 판 캐러셀 사이를 가른다. 접힌 채로 여는지 아닌지는
+    `_detview_js.html` 이 **화면 폭을 보고** 정한다 — 짐작하면 태블릿에서
+    틀린다(192 와 같은 줄).
+
+    **접혀 있어도 켜져 있으면 보인다** — 요약에 값을 적는다(`adjnow`).
+    조정이 걸린 채로 접히면 사진이 왜 어두운지 화면 어디에도 안 적히게 되고,
+    그러면 사람은 사진을 의심한다.
+  {% endcomment %}
+  <details class="adjbox" id="adjbox-{{ uid }}" open>
+    <summary class="nhead adjhead">화면 조정<span class="adjnow"
+             id="adjnow-{{ uid }}"></span></summary>
+    <div class="adj" id="adj-{{ uid }}">
+      <label>밝기 <span class="dim" id="brival-{{ uid }}">100%</span>
+        <input type="range" id="bri-{{ uid }}" min="20" max="250" step="5" value="100"></label>
+      <label>대비 <span class="dim" id="conval-{{ uid }}">100%</span>
+        <input type="range" id="con-{{ uid }}" min="20" max="250" step="5" value="100"></label>
+      <button type="button" class="adjreset" id="adjreset-{{ uid }}"
+              title="밝기·대비를 100% 로">되돌리기</button>
+    </div>
+  </details>
+
+  {% comment %}
+    **개체 카탈로그** (183 · 사용자 2026-09-04). 여기 있던 「이 시야」 메모 상자를
+    걷고 그 자리를 쓴다 — 570 시야에 6건 적힌 칸이었고, 검토하며 정작 손이 가는
+    것은 **고른 개체의 카드**다. 지금까지 그것을 보려면 카탈로그 화면으로 나가야
+    했고(우클릭 「📇 이 개체 카드로」), 나가면 보던 자리를 잃었다.
+
+    **저장은 카탈로그의 좁은 문으로 간다** (`/catalog/save`) — 개체 하나만 고치는
+    문이라 `/review` 처럼 범위를 갈아치우지 않는다(017·027·053 계열이 구조적으로
+    안 난다).
+
+    **유형만은 이 화면의 문으로 간다.** `labels` 는 판 payload 가 **늘 통째로**
+    보내는 것이라, 같은 칸을 다른 문으로 적으면 화면이 모르는 값이 되어 **다음
+    저장이 방금 적은 것을 지운다** — 104 가 그 자리다. 그래서 유형은 단축키가
+    쓰는 `setLabel` 을 그대로 부른다(실행취소도 그 길로 이어진다).
+  {% endcomment %}
+  <div class="ghead">개체 카탈로그</div>
+  <div class="catpane" id="catpane-{{ uid }}">
+    <div class="catsay" id="catsay-{{ uid }}">개체를 하나 고르면 카드가 뜹니다</div>
+    <div class="catbox" id="catbox-{{ uid }}" hidden>
+      <div class="catno" id="catno-{{ uid }}"></div>
+      <div class="crow"><label for="catsp-{{ uid }}">종명</label>
+        <input type="text" id="catsp-{{ uid }}" list="catspecies-{{ uid }}"
+               maxlength="120" placeholder="Globigerina bulloides"></div>
+      <div class="crow"><label for="catcls-{{ uid }}">유형</label>
+        {% comment %}
+          목록은 **JS 가 `cls-{{ uid }}` 로 짠다** — 화면이 이미 그것으로 메뉴와
+          단축키를 만든다. 템플릿에서 한 번 더 돌면 분류를 더할 때 고칠 자리가
+          둘이 되고, 038 이 그렇게 한 곳만 옛 목록으로 남은 자리다.
+        {% endcomment %}
+        <select id="catcls-{{ uid }}"><option value="">—</option></select></div>
+      {% comment %}
+        **등급·자세는 완형에만 매긴다** — 파편으로 지정된 개체에는 이 줄이 아예
+        안 뜬다(카탈로그 카드와 같은 규칙). 서버가 `check_grade_pose` 로 다시
+        검사한다 — 화면에서 막는 것은 막는 것이 아니다(DiaRUGA 063).
+      {% endcomment %}
+      <div class="crow gp" id="catgp-{{ uid }}">
+        <label for="catgrade-{{ uid }}">등급</label>
+        <select id="catgrade-{{ uid }}"
+                title="A 동정키도 완형도 잘 드러난다 · B 완형이나 형태가 덜 드러난다(또는 상태가 나쁘나 동정키가 남았다) · C 완형도 동정키도 잘 안 드러난다">
+          <option value="">—</option>
+          {% for k, text in grades %}<option value="{{ k }}" title="{{ text }}">{{ k }}</option>{% endfor %}
+        </select>
+        <label class="l2" for="catpose-{{ uid }}">자세</label>
+        <select id="catpose-{{ uid }}"
+                title="묶인 판들이 이 값을 나눠 갖습니다 — 초점을 옮겨도 자세는 그대로입니다">
+          <option value="">—</option>
+          {% for k, text in poses %}<option value="{{ k }}">{{ text }}</option>{% endfor %}
+        </select></div>
+      <div class="crow"><label for="catnote-{{ uid }}">코멘트</label>
+        <textarea id="catnote-{{ uid }}" rows="2" maxlength="500"
+                  placeholder="이 개체을 두고 하는 말"></textarea></div>
+      <div class="catmeta" id="catmeta-{{ uid }}"></div>
+      <div class="catstate" id="catstate-{{ uid }}"></div>
+    </div>
+  </div>
+  {% comment %}
+    이미 쓴 종명 — 카탈로그 카드와 **같은 목록**이다(`data.species_seen`). 가두는
+    것이 아니라 같은 종을 두 가지로 적는 것을 막는 자리다.
+  {% endcomment %}
+  <datalist id="catspecies-{{ uid }}">
+    {% for s in species_seen %}<option value="{{ s }}">{% endfor %}
+  </datalist>
+</aside>
+</div>
+
+<div class="shotcap" id="shotcap-{{ uid }}">
+  <b id="shot-title-{{ uid }}"></b>
+  <span class="dim" id="shot-note-{{ uid }}"></span>
+  <a id="shot-full-{{ uid }}" href="" target="_blank" rel="noopener">원본 크기</a>
+</div>
+
+{% comment %}
+  이웃 시야의 주소를 캐러셀에 물려 둔다 — 끝에서 화살표를 누르면 그리로 넘어간다.
+  이전 시야로는 그 시야의 마지막 사진에서 시작해야 오가는 흐름이 끊기지 않는다.
+{% endcomment %}
+<div class="striprow" id="nav-{{ uid }}">
+  <button type="button" class="navbtn grp" data-nav="pgroup"
+          {% if prev_id is None %}disabled title="첫 시야입니다"{% else %}title="이전 시야 g{{ prev_id }} (Ctrl+← · 묻지 않고 바로 이동)"{% endif %}>&laquo;</button>
+  <button type="button" class="navbtn" data-nav="pshot" title="이전 사진 (←)">&lsaquo;</button>
+
+  <div class="strip" id="strip-{{ uid }}"
+       {% comment %}
+         어디로 갈지는 서버가 정한다(`data.group_detail` 이 `?batch=` 를 붙인다).
+         여기에 주소를 박아 두었더니 엔진을 갈아 낀 상태에서 "다음 시야" 를 누를
+         때마다 현재 검출로 튀어나갔다
+       {% endcomment %}
+       {% comment %}
+         주소에 이미 쿼리가 붙어 있을 수 있다 — 검토 화면에서 엔진을 갈아 낀
+         상태가 `?batch=N` 이다. `?` 를 그냥 이어 붙이면 `?batch=5?shot=last`
+         가 되어 둘 다 죽는다.
+       {% endcomment %}
+       {% if prev_url %}data-prev="{{ prev_url }}{% if "?" in prev_url %}&amp;{% else %}?{% endif %}shot=last" data-prev-id="{{ prev_id }}"{% endif %}
+       {% if next_url %}data-next="{{ next_url }}" data-next-id="{{ next_id }}"{% endif %}>
+    {% include "viewer/_shots.html" %}
+  </div>
+
+  <button type="button" class="navbtn" data-nav="nshot" title="다음 사진 (→)">&rsaquo;</button>
+  <button type="button" class="navbtn grp" data-nav="ngroup"
+          {% if next_id is None %}disabled title="마지막 시야입니다"{% else %}title="다음 시야 g{{ next_id }} (Ctrl+→ · 묻지 않고 바로 이동)"{% endif %}>&raquo;</button>
+</div>
+
+<div class="detbar">
+  <span id="selinfo-{{ uid }}" class="dim">선택 없음</span>
+  <span id="savestate-{{ uid }}" class="hint"></span>
+</div>
+{% comment %}
+  **조작 안내가 둘이다** (DiaRUGA 192). 마우스에만 있는 것을 손가락에게 적어 두면
+  화면이 거짓말을 한다 — 휠도 우클릭도 없는 자리에서 "휠 = 확대" 를 읽는다.
+  어느 쪽을 낼지는 CSS 가 정한다(`@media (hover: none)`): 기기가 무엇인지는
+  브라우저가 알고, 우리가 짐작하면 태블릿+마우스 같은 자리에서 틀린다.
+{% endcomment %}
+<p class="dim touchhint" style="font-size:12px;margin:2px 2px 0">
+  <b>두 손가락 = 확대</b> · 한 손가락 끌기 = 이동 · <b>탭 = 선택</b> ·
+  <b>길게 누르기 = 메뉴</b>(삭제·유형·되살리기) · 빈 곳 탭 = 그 자리의 탈락 후보 펼쳐 보기
+</p>
+<p class="dim mousehint" style="font-size:11.5px;margin:2px 2px 0">
+  휠 = 확대 · 우클릭 드래그 = 이동 · <b>클릭 = 선택 (겹친 자리는 다시 클릭하면 다음 것)</b> · Shift+클릭 = 추가/해제 ·
+  드래그 = 범위 선택 · <b>선택 위에서 우클릭 = 오검출 삭제</b> ·
+  <b>빈 곳 클릭 = 그 자리의 탈락 후보 펼쳐 보기</b>
+  {% comment %}
+    탈락 레이어를 켜면 클릭 우선순위가 바뀐다 — 켰을 때만이라 그 조건을 함께
+    적는다. 안 적으면 "왜 개체가 안 골라지지" 가 된다.
+  {% endcomment %}
+  · <b>탈락</b>을 켜면 클릭이 탈락 후보를 먼저 집는다 (검출 개체는 Shift+클릭)
+</p>
+{% comment %}
+  단축키 안내. 목록을 여기 적지 않는다 — 분류를 더하면서 안내만 옛 목록으로
+  남는 일이 이미 두 번 있었다. ClassDef 의 hotkey 가 그린다. 키를 안 준 분류는
+  여기 안 나오고, 그것이 곧 "아직 배정 안 했다" 는 표시다.
+  읽기 전용(`?batch=` 로 다른 묶음을 볼 때)에서는 키가 안 듣는다 — 안내도 내지 않는다.
+{% endcomment %}
+{% comment %}
+  삭제 키는 ClassDef 가 아니라 여기 적는다 — 오검출은 분류가 아니라 removed
+  집합이라 테이블에 태울 자리가 없다(hotkey_groups 가 .strip() 을 걸어 공백은 빈
+  값으로 사라진다). **가장 많이 하는 조작이라 맨 앞에 둔다** (교정 6,753 중
+  삭제가 5,467).
+
+  분류가 하나도 없어도 이 줄은 놓인다 — 삭제 키는 분류와 무관하다.
+{% endcomment %}
+{% hotkey_groups as hk %}
+<p class="dim keyhint mousehint" id="keyhint-{{ uid }}" style="font-size:11.5px;margin:2px 2px 0">
+  <b>단축키</b> — 개체를 고르고
+  <kbd>Space</kbd>&nbsp;<span title="오검출로 삭제 · 지운 것을 고르고 다시 누르면 되살립니다">삭제</span>{% if hk.groups %} ·
+  {% for h in hk.groups %}<kbd>{{ h.hotkey|upper }}</kbd>&nbsp;{% for c in h.classes %}{% if not forloop.first %} → {% endif %}<span title="{{ c.label }}">{{ c.short }}</span>{% endfor %}{% if not forloop.last %} · {% endif %}{% endfor %}{% if hk.cycles %}
+  <span class="dim">(→ 는 같은 키를 다시 누르면 넘어간다는 뜻)</span>{% endif %}{% endif %}
+</p>
+</section>
+
+<script type="application/json" id="cand-{{ uid }}">{{ det.candidates|json_dumps }}</script>
+<script type="application/json" id="rej-{{ uid }}">{{ det.rejected|json_dumps }}</script>
+<script type="application/json" id="gone-{{ uid }}">{{ det.removed_candidates|json_dumps }}</script>
+<script type="application/json" id="acc-{{ uid }}">{{ det.accepted_keys|json_dumps }}</script>
+<script type="application/json" id="lab-{{ uid }}">{{ det.labels|json_dumps }}</script>
+<script type="application/json" id="cls-{{ uid }}">{% class_json %}</script>
+<script type="application/json" id="umpp-{{ uid }}">{{ det.um_per_pixel|json_dumps }}</script>
+
+{% comment %}
+  배선은 `_detview_js.html` 이 들고 있다 (DiaRUGA P25 1단계). **부르는 자리는 스크립트가
+  있던 그 자리다** — 아래로 옮기면 그때는 없던 요소(개체 목록 표)를 잡게 되어
+  갈래가 조용히 바뀐다.
+
+  **오프라인은 미룬다**(`defer_init`). 파일 하나에 시야가 서른이라 전부 그리면
+  열리는 데 몇 초가 걸리고, 보지도 않을 시야의 마스크를 그린다 — 그쪽 껍데기가
+  판을 열 때 부른다.
+{% endcomment %}
+{% if not defer_init %}<script>initDetView("{{ uid }}");</script>{% endif %}
+{% endif %}
+
+<section data-pane="list" id="pane-list-{{ uid }}" hidden>
+<div class="scroll">
+<table>
+  <thead><tr>
+    <th>#</th><th>형태</th><th>코멘트</th><th>중심 xy</th>
+    <th>장축 µm</th><th>단축 µm</th><th>신장비</th>
+    <th>타원 IoU</th><th>볼록성</th><th>매끈함</th><th>확신도</th>
+  </tr></thead>
+  <tbody>
+  {% for c in det.candidates %}
+    <tr>
+      <td>{{ c.id }}</td>
+      <td>{% if c.cls %}<span class="badge {{ c.cls|cls_badge }}" title="{{ c.cls|cls_label }}">{{ c.cls|cls_short }}</span>
+          {% else %}<span class="dim">—</span>{% endif %}{% if c.cls_user %} <span class="badge">사람</span>{% endif %}{% if c.manual %} <span class="badge warn">수동</span>{% endif %}</td>
+      <td style="text-align:left; white-space:pre-wrap; max-width:260px">{{ c.note|default:"" }}</td>
+      <td class="mono dim">{{ c.center_xy.0 }}, {{ c.center_xy.1 }}</td>
+      <td>{{ c.major_um|default:c.long_side_um }}</td>
+      <td>{{ c.minor_um|default:c.short_side_um }}</td>
+      <td>{{ c.elongation|default:c.aspect_ratio }}</td>
+      <td>{{ c.ellipse_iou|default:"—" }}</td>
+      <td>{{ c.solidity|default:"—" }}</td>
+      <td>{{ c.convexity|default:"—" }}</td>
+      <td>{{ c.predicted_iou|floatformat:2|default:"—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if det.thresholds %}
+<p class="dim mono" style="font-size:11px; margin-top:6px">
+  문턱 — 장축 {{ det.thresholds.min_um }}~{{ det.thresholds.max_um }} µm ·
+  확신도 ≥{{ det.thresholds.conf_min }}
+  · 조정은 <a href="{% url 'thresholds' slug %}">문턱 화면</a> 또는 <code>refilter.py</code> (재추론 불필요)
+</p>
+{% endif %}
+</section>

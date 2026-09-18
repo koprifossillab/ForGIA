@@ -1,103 +1,261 @@
 {% extends "viewer/base.html" %}
-{% load viewer_extras %}
-{% block title %}{{ label }} · g{{ gid }} — ForGIA{% endblock %}
-{% block subtitle %}<a href="{% url 'dataset' slug %}">{{ label }}</a> / g{{ gid }}{% if cell %} <span class="dim">칸 {{ cell }}</span>{% endif %}{% endblock %}
-{% block nav %}
-  {% if prev is not None %}<a class="todo" href="{% url 'group' slug prev %}">← g{{ prev }}</a>{% endif %}
-  <span class="dim">{{ pos }} / {{ total }}</span>
-  {% if next is not None %}<a class="todo" href="{% url 'group' slug next %}">g{{ next }} →</a>{% endif %}
-{% endblock %}
 {% comment %}
-  **1·2단계의 시야 화면 — 사진과 검출 마스크만 본다.** 합성본을 크게, 프레임을 아래
-  줄에, 대표 검출의 폴리곤을 SVG 로 얹는다(합성본을 볼 때만 — 프레임의 좌표가
-  아니다). 교정·단축키가 든 DiaRUGA 의 검토 화면(`group.html` 1,300줄 +
-  `_detview_js.html`)은 3단계에서 이 주소를 그대로 물려받는다. 그때 이 파일은
-  통째로 바뀐다 — 여기에 무엇을 더 쌓지 않는다.
+  DiaRUGA v0.29.0 `group.html` 에서 왔다 — 오프라인 검토기 조각만 뺐다(5단계).
 {% endcomment %}
-{% block style %}
-  .shotview { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
-  .shotview .big { background: #000; border-radius: 9px; overflow: hidden; line-height: 0; }
-  .shotview .big img { width: 100%; height: auto; display: block; cursor: zoom-in; }
-  .shotview .side { font-size: 12.5px; }
-  .shotview .side .ro { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; color: var(--dim); }
-  .shotview .side .ro code { color: var(--fg); }
-  .shots { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-  .shots .shot {
-    width: 150px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
-    background: var(--panel); color: inherit; text-align: left; padding: 0; cursor: pointer; font: inherit;
-  }
-  .shots .shot.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-  .shots .shot img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
-  .shots .shot .cap { display: block; padding: 4px 7px 6px; font-size: 11.5px; }
-  .shots .shot.best .cap { color: var(--good); }
-  .shots .shot .bar { margin: 0 7px 6px; }
-  @media (max-width: 820px) { .shotview { grid-template-columns: 1fr; } }
+{% load viewer_extras %}
+{% block title %}{{ label }} g{{ id }} — ForGIA{% endblock %}
+{% comment %}
+  경로·그룹·태그를 머리글 한 줄에 모은다. 본문은 곧바로 사진으로 시작한다 —
+  사진 위에 세 줄을 쌓아 두면 정작 볼 것이 화면 밖으로 밀린다.
+{% endcomment %}
+{% block subtitle %}<a href="{% url 'index' %}">데이터셋</a> /
+  <a href="{% url 'dataset' slug %}">{{ label }}</a> / <b>g{{ id }}</b>{% if cell %} 칸 {{ cell }}{% endif %} ·
+  {{ n }}장 · <span class="mono">{{ tag }}</span> · 최선 {{ sharpest }}{% endblock %}
+{% block nav %}
+  {% comment %}
+    엔진 고르기는 사진 위 탭줄의 라디오(`◉ SAM / ○ YOLO`)로 옮겼다 (DiaRUGA 051). 여기
+    있던 "엔진 비교" 링크는 다른 화면(`/engine/`)으로 나가는 길이었고, 나갔다
+    돌아오면 어느 시야를 보고 있었는지 잃었다. **그 화면은 075 에서 지웠다** —
+    라디오가 같은 일을 자리를 안 잃고 하므로 남길 이유가 없었다.
+
+    **이웃 시야로 갈 때 고른 엔진을 들고 간다.** `prev_url`·`next_url` 은
+    서버가 만든다(`data.group_detail` 이 `?batch=` 를 붙인다).
+  {% endcomment %}
+  {% if prev_url %}<a href="{{ prev_url }}">← g{{ prev_id }}</a>{% endif %}
+  {% if next_url %}<a href="{{ next_url }}">g{{ next_id }} →</a>{% endif %}
+  {% comment %}
+    **다음 미검토.** 옆 시야로 한 칸 가는 것과 다른 일이다 — 검토가 드문드문
+    남으면 한 칸씩 눌러 이미 본 것을 계속 지나야 한다.
+
+    뒤에 없으면 앞으로 돌아간다. 그때는 그렇게 적는다(`todo_back`) — 말없이
+    뒤로 보내면 같은 자리를 도는 것으로 읽힌다.
+
+    `?batch=` 로 다른 엔진을 보는 중에는 나오지 않는다. 그 화면은 읽기 전용이라
+    검토를 이어갈 자리가 아니다 — `data.group_detail` 이 그 갈래에서
+    `todo_url` 을 안 만든다.
+  {% endcomment %}
+  {% if todo_url %}
+    <a class="todo" href="{{ todo_url }}"
+       title="검토 완료로 표시되지 않은 다음 시야로 갑니다{% if todo_back %} (뒤에 남은 것이 없어 앞으로 돌아갑니다){% endif %}">
+      {% if todo_back %}↩{% else %}⏭{% endif %} 다음 미검토 g{{ todo_id }}
+      <span class="dim">{{ todo_left }}개 남음</span></a>
+  {% elif not review_blocked %}
+    <span class="todo none" title="이 슬라이드의 시야를 모두 검토 완료로 표시했습니다">✓ 미검토 없음</span>
+  {% endif %}
 {% endblock %}
+
 {% block content %}
-<div class="shotview">
-  <div>
-    <div class="big" id="big">
-      {% if stack %}
-        <a href="{% full stack.focused_rel %}" target="_blank" rel="noopener"><img id="bigimg" src="{% thumb stack.focused_rel 1600 %}" alt="합성본"></a>
-        {% if detection and detection.image_rel == stack.focused_rel %}
-          <svg class="masks" id="masks" viewBox="0 0 {{ detection.size.0 }} {{ detection.size.1 }}" preserveAspectRatio="none">
-            {% for c in detection.candidates %}<polygon class="{{ c.cls|default:'none' }}" points="{{ c|mask_points }}"><title>{{ c.cls }} · 장축 {{ c.major_um }} µm · 확신도 {{ c.conf|floatformat:2 }}</title></polygon>{% endfor %}
-          </svg>
-        {% endif %}
-      {% elif frames %}
-        <a href="{% full frames.0.rel %}" target="_blank" rel="noopener"><img id="bigimg" src="{% thumb frames.0.rel 1600 %}" alt="{{ frames.0.name }}"></a>
-      {% else %}
-        <div class="note">사진 파일이 없다.</div>
-      {% endif %}
-    </div>
-    <div class="shots" id="shots">
-      {% if stack %}
-        <button type="button" class="shot on" data-view="{% thumb stack.focused_rel 1600 %}" data-full="{% full stack.focused_rel %}" data-title="합성본">
-          <img loading="lazy" src="{% thumb stack.focused_rel 220 %}" alt="합성본"><span class="cap">합성본</span>
-        </button>
-      {% endif %}
-      {% for f in frames %}{% if f.exists %}
-        <button type="button" class="shot{% if f.is_sharpest %} best{% endif %}{% if not stack and forloop.first %} on{% endif %}"
-                data-view="{% thumb f.rel 1600 %}" data-full="{% full f.rel %}" data-title="{{ f.name }}">
-          <img loading="lazy" src="{% thumb f.rel 220 %}" alt="{{ f.name }}">
-          <span class="cap">{{ f.name }}{% if f.is_sharpest %} ★{% endif %}</span>
-          <span class="bar"><i style="width:{{ f.sharp_pct }}%"></i></span>
-        </button>
-      {% endif %}{% endfor %}
-    </div>
-  </div>
-  <aside class="side">
-    <div class="ro">
-      <span>시야</span><code class="mono">{{ tag }}</code>
-      <span>격자 칸</span><code class="mono">{% if cell %}{{ cell }}{% else %}—{% endif %}</code>
-      <span>사진</span><code class="mono">{{ n }}장{% if span_sec %} · {{ span_sec|floatformat:1 }}초{% endif %}</code>
-      {% if stack %}
-      <span>배율</span><code class="mono">{{ stack.um_per_pixel|floatformat:4 }} µm/px <span class="dim">({{ stack.um_per_pixel_source }})</span></code>
-      <span>합성</span><code class="mono">기준 {{ stack.ref|default:"—" }} · 정렬 실패 {{ stack.align_failed }} · 이득 {{ stack.gain|default_if_none:"—" }}</code>
-      {% else %}
-      <span>합성</span><code class="mono dim">아직 없음</code>
-      {% endif %}
-      <span>검출</span><code class="mono">{% if detection %}{{ detection.n_candidates }}개 <span class="dim">(원시 {{ detection.n_raw_masks }} · 크기통과 {{ detection.n_sized }} · 탈락 {{ detection.rejected|length }})</span>{% elif elsewhere %}<span class="dim">이 묶음에 없음 — {{ elsewhere|join:" · " }} 에는 있다</span>{% else %}<span class="dim">아직 없음</span>{% endif %}</code>
-    </div>
-    <div style="margin-top:10px">{% include "viewer/_batchtag.html" with review_batch=review_batch only %}</div>
-    {% if detection %}<label class="dim" style="display:block;margin-top:8px;font-size:12px"><input type="checkbox" id="maskck" checked> 마스크 보이기</label>{% endif %}
-    <p class="dim" style="margin-top:12px">검출·동정·교정은 2·3단계에서 이 화면에 붙는다.</p>
-  </aside>
+
+{% comment %}
+  자동 처리가 끝나기 전에는 검토를 막는다 (DiaRUGA P01 §1). 반쯤 처리된 슬라이드를
+  검토하면 아직 안 돌아간 시야의 검출이 뒤늦게 들어오면서 이미 본 화면이 바뀐다.
+  서버도 저장을 거절하지만(views.save_review), 사람이 헛수고하지 않게 여기서 먼저
+  알리고 교정 UI 를 잠근다.
+{% endcomment %}
+{% if review_blocked %}
+<div class="blocked">
+  <b>검토 준비 중입니다</b>
+  <span>{{ review_blocked }} 사진은 그대로 보실 수 있고, 검토 도구만 잠가 두었습니다.</span>
 </div>
-<script>
-(function () {
-  var big = document.getElementById('bigimg'), shots = document.getElementById('shots');
-  if (!big || !shots) return;
-  var masks = document.getElementById('masks'), ck = document.getElementById('maskck');
-  shots.addEventListener('click', function (e) {
-    var b = e.target.closest('.shot'); if (!b) return;
-    big.src = b.dataset.view; big.alt = b.dataset.title;
-    big.parentElement.href = b.dataset.full;
-    shots.querySelectorAll('.shot').forEach(function (x) { x.classList.toggle('on', x === b); });
-    // 마스크는 합성본의 좌표다 — 프레임을 볼 때는 감춘다 (다른 판에 얹으면 어긋난다)
-    if (masks) masks.style.display = (b.dataset.title === '합성본' && (!ck || ck.checked)) ? '' : 'none';
-  });
-  if (ck && masks) ck.addEventListener('change', function () { masks.style.display = ck.checked ? '' : 'none'; });
-})();
-</script>
+<style>
+  .blocked { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px;
+             background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-line); }
+  .blocked b { display: block; margin-bottom: 3px; }
+  .blocked span { opacity: .85; font-size: 13px; }
+</style>
+{% endif %}
+
+{% comment %}
+  검출 전에도 같은 화면을 쓴다. 캐러셀은 stack·frames 로 그리므로 검출과 무관하고,
+  개체가 0개인 검출을 넘기면 그대로 돈다 (data.preview_detection).
+  없앨 것은 화면이 아니라 도구다 — 눌러도 서버가 409 로 거절한다.
+{% endcomment %}
+{% if review_blocked or stack.detection.preview_only %}
+<style>
+  /* 사진과 캐러셀은 그대로 두고 도구만 감춘다.
+     `.detview` 를 붙여야 먹는다 — base.html 이 세 가지 모두 `display: flex` 로
+     잡고 있어 특이도에서 진다. 화면은 "도구만 잠가 두었습니다" 라고 적으면서
+     실제로는 도구가 그대로 보이고 있었다 (DiaRUGA 051). */
+  .detview .tools, .detview .drawtool,
+  .detview .donebar, .detview .layers { display: none; }
+  /* 개체가 없으니 "개체 목록" 탭과 후보 수 표시도 의미가 없다.
+     엔진 고르기(.engpick)는 남긴다 — 다른 엔진에는 검출이 있을 수 있다 */
+  .dettabs [data-pane="list"], .dettabs .tabmeta { display: none; }
+</style>
+{% endif %}
+{% if stack.detection.preview_only %}
+{% comment %}
+  **왜 비었는지 갈라 적는다** (DiaRUGA P10 4단계). 검출이 아예 없는 것과 **지금 보는
+  묶음에만 없는 것**은 다른 말이다 — 뒤엣것을 "검출은 아직입니다" 라고 적으면
+  사람이 돌리러 가고, 실제로는 이미 돌아 있다.
+
+  **조용히 다른 묶음으로 물러나지 않는다**(DiaRUGA P10 3.6). 무엇을 보고 있는지 모른 채
+  교정을 쌓는 것보다 빈 화면이 낫고, 대신 **왜 비었는지는 반드시 적는다.**
+{% endcomment %}
+{% if elsewhere %}
+<div class="note">
+  이 시야에는 <b>{{ review_batch }}</b> 의 검출이 없습니다 —
+  {% for b in elsewhere %}<span class="mono">{{ b }}</span>{% if not forloop.last %} · {% endif %}{% endfor %}
+  에는 있습니다.
+  <a href="{% url 'system_settings' %}">시스템 설정</a>에서 검토할 묶음을 바꾸거나,
+  이 묶음으로 다시 돌리십시오.
+</div>
+{% else %}
+<div class="note">합성은 끝났고 검출은 아직입니다. 사진만 보실 수 있습니다.</div>
+{% endif %}
+{% endif %}
+
+{% comment %}
+  이미지와 검출은 한 화면에 있다. 사진 아래 캐러셀에서 합성본·원본 프레임을
+  오가며 같은 검출 레이어를 얹어 본다 (깊이 맵은 안 낸다 — 123).
+
+  **화면이 둘로 갈린다.** 현재 검출(SAM2)은 교정을 얹어 그리고 저장까지 받는다.
+  `?batch=` 로 다른 묶음을 고르면 그 묶음이 낸 그대로를 읽기 전용으로 그린다 —
+  교정은 mask_key(bbox 문자열)로 붙는데 엔진이 다르면 거의 전부 어긋나기
+  때문이다 (`data.group_detail` 머리말).
+{% endcomment %}
+{% comment %}
+  링크가 짚어 온 개체 (DiaRUGA 118). 카탈로그·크롭·계측 표에서 사진을 눌러 온 길이다 —
+  `_detection.html` 이 이 키의 개체를 찾아 표시하고, 그 개체가 다른 판에 있으면
+  캐러셀을 그 판으로 옮긴다.
+
+  **읽기 전용 갈래 앞에 둔다.** 두 갈래가 같은 `uid`("stack")로 조각을 들이므로
+  여기 한 번만 적으면 양쪽에 다 걸린다 — 갈래마다 적으면 한쪽만 고치는 날이 온다.
+{% endcomment %}
+{% if hl %}
+<script type="application/json" id="hl-stack">{{ hl|json_dumps }}</script>
+{% endif %}
+
+{% comment %}
+  검토 화면의 배선 (DiaRUGA P25 1단계). **여기 한 번 놓고, 조각이 `initDetView(uid)` 로
+  부른다** — 갈래가 둘이라(읽기 전용·현재 검출) 조각 쪽에 두면 어느 쪽이든
+  한 번은 렌더되지만, 오프라인 검토기는 조각을 시야마다 놓으므로 배선을 조각과
+  갈라 두어야 한다.
+{% endcomment %}
+{% include "viewer/_detview_js.html" %}
+
+{% if readonly %}
+  <style>
+    /* 도구를 통째로 잠근다. 사진과 마스크는 그대로 본다.
+       **감추는 것은 막는 것이 아니다** — 저장은 JS(ro-stack)가, 그다음 서버가
+       막는다 (027 에서 CSS 만 믿었다가 교정 37건을 잃었다)
+
+       `.detview` 를 붙여야 한다. base.html 이 `.detview .tools { display: flex }`
+       로 잡고 있어서 `.tools` 만 적으면 특이도에서 져 아무 일도 안 일어난다 —
+       `/engine/` 이 그렇게 도구를 감춘 줄 알고 계속 내보이고 있었다. */
+    /* **`.drawtool` 을 빠뜨리면 안 된다** (DiaRUGA 194). 연필이 `.tools` 밖으로
+       나갔으므로 여기 안 적으면 읽기 전용 화면에서 마스크를 그릴 수 있다 —
+       051 이 정확히 그 자리다(저장만 잠그고 화면은 되는 것처럼 보였다). */
+    .detview .tools, .detview .drawtool, .detview .donebar { display: none; }
+  </style>
+  {% comment %}
+    이 표식이 있으면 `_detection.html` 이 저장을 아예 보내지 않고, 사진 가운데
+    위에 "Read only" 를 띄운다. 도구를 CSS 로 감추는 것만으로는 못 막는다 —
+    마스크 클릭이 save() 를 부른다.
+  {% endcomment %}
+  <span id="ro-stack" hidden></span>
+  {% if base_det %}
+    <script type="application/json" id="shotdet-stack">{{ shot_dets|json_dumps }}</script>
+    {% include "viewer/_detection.html" with det=base_det base=base_rel uid="stack" title="검출결과 검토" shot=base_name %}
+  {% else %}
+    {% comment %}
+      검출이 없으면 `_detection.html` 을 안 그리는데, 엔진 고르는 라디오가
+      거기 있다 — 돌아갈 길을 여기서 따로 낸다. 없으면 갇힌다.
+    {% endcomment %}
+    <div class="note">이 시야에는 고른 묶음의 검출이 없습니다.
+      <a href="{% url 'group' slug id %}">현재 검출로 돌아가기</a></div>
+  {% endif %}
+{% elif base_det %}
+  {% comment %}
+    **판 하나를 그리고 나머지는 캐러셀이 갈아 끼운다** (DiaRUGA P09 1단계). 예전에는
+    합성본이면 한 장, 싱글턴이면 프레임을 훑어 그렸다 — 시야마다 검출이
+    하나라는 전제다. 프레임별 검출이 올라오면 판이 4~6개가 되는데, 세로로
+    늘어서면 **같은 자리에서 비교할 수가 없다.** "이 개체이 어느 초점면에서
+    잡혔나" 는 자리가 안 움직여야 보인다.
+
+    읽기 전용 갈래가 같은 이유로 이미 그렇게 한다(`engine_viewpoint`). 다른 점은
+    **저장이 따라가야 한다는 것** — `shot_dets` 에 교정 상태와 `image` 가 함께
+    실리고, 캐러셀이 판을 바꾸면 `swapDet` 이 저장 대상까지 옮긴다.
+    자료가 없으면(판이 하나) `swapDet` 이 곧장 빠져나가 지금까지와 똑같이 돈다.
+  {% endcomment %}
+  {% if shot_dets %}
+    <script type="application/json" id="shotdet-stack">{{ shot_dets|json_dumps }}</script>
+    {# 같은 개체 묶음 (DiaRUGA P11). 판이 하나뿐이면 묶을 것이 없어 links 도 안 온다 #}
+    <script type="application/json" id="links-stack">{{ links|json_dumps }}</script>
+  {% endif %}
+  {% include "viewer/_detection.html" with det=base_det base=base_rel uid="stack" title="검출결과 검토" shot=base_name image_id=base_image %}
+{% endif %}
+
+{% if not readonly and not stack and not frames %}
+  <div class="note">이 시야는 아직 합성하지 않았습니다.</div>
+{% endif %}
+
+{% comment %}
+  **오프라인 검토기를 여기서 꺼낸다** (사용자 2026-09-07). 지금 보고 있는 시야가
+  기본 범위다 — 어디를 꺼낼지는 대개 지금 보는 자리에서 정한다.
+
+  **접어 둔다.** 검토하는 동안 늘 보일 것이 아니고, 사진이 그만큼 밀린다.
+  자동 처리 중이면 서버가 `off` 를 안 준다(그때 꺼내 봐야 반입이 막힌다).
+{% endcomment %}
+{# 오프라인 검토기(`_offline_pick.html`)는 5단계 #}
+
+{% comment %}
+  시야 가르기 — 초점 시리즈가 잘못 묶였을 때.
+
+  **여기(group.html)에 둔다. `_detection.html` 이 아니다.** 그 조각은 읽기 전용
+  갈래(`?batch=`)와 공유하는데, 027 이 정확히 그 자리에서 났다 — "읽기 전용" 이라
+  적어 놓고 CSS 로 버튼만 감췄더니 한 번의 클릭이 교정 37건을 지웠다. 화면에
+  아예 없어야 하고, 서버(views.split_group)가 다시 막는다.
+
+  JS 를 쓰지 않는다. 체크박스와 POST 만으로 되는 일에 배선을 만들 이유가 없다 —
+  배선은 눌러 봐야 아는 고장을 만든다(브라우저는 045 이후 있지만, 안 만든 배선을
+  시험할 일은 애초에 없다).
+
+  프레임이 하나뿐이면 낼 이유가 없고, 검토가 막힌 슬라이드에서도 감춘다.
+  **읽기 전용(다른 엔진을 고른 상태)에서도 감춘다** — 그 화면에서 무엇을 눌러도
+  현재 검출과 그 교정이 사라지는 일은 없어야 한다. 서버가 막지는 않는다(같은
+  시야이므로 정당한 요청이다). 여기서 감추는 것으로 충분하다: 읽기 전용은
+  "저장이 안 되는 화면" 이지 "쓰기가 봉인된 시야" 가 아니다.
+{% endcomment %}
+{% if frames|length > 1 and not review_blocked and not readonly %}
+<details class="resplit">
+  <summary>시야 가르기</summary>
+  <div class="resplit-body">
+    <p>이 시야의 사진들이 <b>사실은 서로 다른 시야</b>라면 여기서 가릅니다.
+       초점만 바뀐 사진들은 배치가 같고, 스테이지가 움직였으면 그림이 달라집니다 —
+       위 캐러셀에서 넘겨 보며 비교하십시오.</p>
+    <p class="warn">가른 시야의 <b>검출과 교정은 사라집니다.</b> 다시 검토해야 합니다.
+       다른 시야는 건드리지 않습니다.</p>
+    <form method="post" action="{% url 'split_group' slug id %}">
+      {% csrf_token %}
+      <ol class="cuts">
+        {% for f in frames %}
+        <li>
+          <span class="fname">{{ f.name|cut:"Snap-" }}{% if f.is_sharpest %} ★{% endif %}</span>
+          {% if not forloop.last %}
+          <label class="cut">
+            <input type="checkbox" name="after" value="{{ f.name }}">
+            여기서 가른다
+          </label>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      <button type="submit">가르기 — 무엇이 사라지는지 먼저 봅니다</button>
+    </form>
+  </div>
+</details>
+<style>
+  .resplit { margin: 18px 0 0; border: 1px solid var(--line); border-radius: 6px; }
+  .resplit > summary { padding: 8px 12px; cursor: pointer; font-size: 13px; opacity: .8; }
+  .resplit-body { padding: 4px 14px 14px; max-width: 640px; }
+  .resplit p { font-size: 13px; line-height: 1.55; margin: 6px 0; }
+  .resplit p.warn { color: var(--warn); }
+  .cuts { list-style: none; margin: 12px 0; padding: 0; }
+  .cuts li { display: flex; align-items: center; gap: 12px; padding: 3px 0; }
+  .cuts .fname { font-family: ui-monospace, monospace; font-size: 13px; min-width: 84px; }
+  .cuts .cut { font-size: 12px; opacity: .75; cursor: pointer; }
+  .cuts .cut input { margin-right: 5px; }
+</style>
+{% endif %}
 {% endblock %}

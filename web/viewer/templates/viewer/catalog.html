@@ -1,0 +1,1414 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `catalog.html` 에서 왔다 — 도감 연결(atlas)·오프라인 동정기는 5단계라 뺐다. 종명은 `Taxon` 자동완성.
+{% endcomment %}
+{% load viewer_extras %}
+{% block title %}{{ label }} 개체 카탈로그 — ForGIA{% endblock %}
+{% block subtitle %}<a href="{% url 'index' %}">데이터셋</a> /
+  <a href="{% url 'dataset' slug %}">{{ label }}</a> / <b>개체 카탈로그</b> ·
+  {{ total }}개{% if shown_to %} 중 {{ shown_from }}~{{ shown_to }}{% endif %}{% endblock %}
+{% block nav %}
+  <a href="{% url 'dataset' slug %}">그룹 목록</a>
+  <a href="{% url 'crops' slug %}">검출 결과</a>
+  <a href="{% url 'detections' slug %}">계측 표</a>
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  개체마다 카드 하나 — 왼쪽에 유공충 그림, 오른쪽에 번호·종명·유형·코멘트.
+
+  **검토 대상 묶음 하나만 따라간다** (사용자 방침 2026-08-10). 고르는 장치를 안
+  두는 이유는 `data.catalog_rows` 머리말에 있다 — 화면마다 다른 판을 보는 상태가
+  051 이 난 자리다. 대신 **어느 엔진의 판인지 머리에 적는다**: 번호의 꼬리가 그
+  코드라서, 적어 둔 번호만 보고도 어느 검출인지 알 수 있다.
+{% endcomment %}
+
+<style>
+  /* 카드 — 왼쪽 그림, 오른쪽 칸. 카드 자체가 두 열이다. */
+  .cat { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); }
+  .catcard {
+    display: grid; grid-template-columns: 150px 1fr;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    overflow: hidden;
+    /* 고르는 칸이 그림 위에 앉는다 (DiaRUGA P16) — 기준이 카드여야 한다. */
+    position: relative;
+  }
+  .catcard.dirty { border-color: var(--warn); }
+  .catcard.saved { border-color: var(--good); }
+  .catcard .pic {
+    display: flex; align-items: center; justify-content: center;
+    position: relative; background: #000; min-height: 150px;
+  }
+  .catcard .pic .cimg { position: relative; display: inline-block; line-height: 0; }
+  .catcard .pic img { display: block; max-width: 150px; max-height: 190px; }
+  .catcard .pic .csb {
+    position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+    font-size: 9.5px; line-height: 1.1; color: #fff; text-align: center;
+    text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none;
+  }
+  .catcard .pic .csb b {
+    display: block; height: 2.5px; background: #fff; border-radius: 1px;
+    margin-bottom: 1.5px; box-shadow: 0 0 2px rgba(0,0,0,.9);
+  }
+  .catcard .fld { padding: 8px 10px; display: grid; gap: 5px; align-content: start; }
+  .catcard .no {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px;
+    color: var(--fg); line-height: 1.35;
+    display: flex; gap: 6px; align-items: baseline;
+  }
+  /* 번호는 한 줄로 둔다 — 접히면 표에서 눈으로 훑을 때 자리가 어긋난다.
+     좁으면 가로로 흐르게 하고, 통째로 고르기는 그대로 된다. */
+  .catcard .no .v { flex: 1 1 auto; min-width: 0; overflow-x: auto;
+                    white-space: nowrap; scrollbar-width: none; }
+  .catcard .no .v::-webkit-scrollbar { display: none; }
+  .catcard .no button {
+    flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 5px;
+    background: transparent; border: 1px solid var(--line); color: var(--dim);
+    cursor: pointer;
+  }
+  .catcard .no button:hover { border-color: var(--accent); color: var(--accent); }
+  .catcard .no.none { color: var(--warn); font-family: inherit; font-size: 11.5px; }
+  /* 번호가 어느 판의 것인가 (DiaRUGA P18). 번호 옆이라 흐리게 — 읽을 것은 번호다. */
+  .catcard .no .nofrom { flex: none; font-family: inherit; font-size: 10.5px;
+                         color: var(--dim); }
+  /* 검토한 시야가 몇인가 (DiaRUGA P18). 진행률 옆이라 같은 크기로 둔다. */
+  .catbar .vpdone { font-size: 12px; color: var(--warn-fg); }
+  .catbar .vpdone b { color: var(--fg); }
+  .catcard .row { display: flex; gap: 6px; align-items: center; }
+  .catcard .row > label { flex: none; width: 3.4em; font-size: 11.5px; color: var(--dim); }
+  .catcard input[type=text], .catcard select, .catcard textarea {
+    flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12.5px;
+    padding: 3px 6px; border-radius: 6px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  /* **코멘트는 작게 둔다.** 실측으로 코멘트가 있는 판정이 2건이고 가장 긴 것이
+     14자다(줄바꿈 0). 카드에 편집 칸이 다섯이라 자리를 크게 먹는 쪽이 손해다 —
+     길게 쓸 일이 생기면 끌어서 늘린다(`resize: vertical`). **저장 한도는 그대로
+     500자다** — 칸을 줄이는 것과 적힌 것을 자르는 것은 다른 이야기다. */
+  .catcard textarea { resize: vertical; min-height: 1.7em; }
+  /* 등급·자세는 값이 셋뿐이라 한 줄에 나란히 둔다 — 줄을 둘 쓰면 카드가 길어져
+     한 화면에 보이는 개체가 준다. 표처럼 훑는 화면이다. */
+  .catcard .row.gp select { flex: 1 1 0; }
+  .catcard .row.gp > label.l2 { width: auto; margin-left: 3px; }
+  /* **`[hidden]` 은 특이도 (0,0,1) 이라 `.row { display: flex }` 에 진다.**
+     감추라고 해 놓고 그대로 보이는 그 자리다 — `.tools`·타일에 이어 세 번째라
+     여기서는 명시한다 (CLAUDE.md 템플릿 절). */
+  .catcard .row[hidden] { display: none; }
+  /* 종명 옆의 `도판` (DiaRUGA 149). 칩과 같은 모양이되 **줄어들지 않는다** — 종명 칸이
+     `flex: 1 1 auto` 라 자리를 다 먹으면 글자가 잘린다. */
+  .catcard .plate { flex: none; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+  .catcard .plate.on { border-color: var(--accent); color: var(--accent); }
+  /* 위 `.row[hidden]` 과 같은 이유로 명시한다 — `.chip` 에 `display` 가 없어
+     지금은 기본값이 이기지만, 나중에 누가 `.chip { display: inline-flex }` 를
+     더하는 순간 **감춘 단추가 조용히 보이기 시작한다.** */
+  .catcard .plate[hidden] { display: none; }
+  /* **짚어 온 개체** (DiaRUGA 149). 골라 둔 것(`.pick`)과 헷갈리면 안 되므로 테두리를
+     쓴다 — 카드에 이미 배경색이 분류별로 걸려 있다.
+
+     **테두리만으로는 부족하다** (150 · 118 이 반대편에서 먼저 겪었다). 표시가
+     하나 더 있는 것을 보고 그것이 *누르고 온 그 개체*인지 이미 골라 둔
+     것인지 화면에서 안 갈린다 — 그래서 글자로 적는다. */
+  .catcard.hl { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .catcard .hlmark {
+    position: absolute; right: 6px; top: 6px; z-index: 3;
+    font-size: 10.5px; line-height: 1; padding: 3px 8px; border-radius: 999px;
+    background: var(--accent); color: var(--bg); white-space: nowrap;
+    pointer-events: none;
+  }
+  /* **한 번만 뛴다.** 계속 깜빡이면 검토하는 내내 눈이 그리로 끌린다 — 표시는
+     "여기 있다" 고 한 번 말하는 것이지 상태가 아니다 (DiaRUGA 118). */
+  @keyframes hlpulse {
+    0%   { outline-color: var(--accent); outline-offset: 10px; }
+    100% { outline-color: var(--accent); outline-offset: 2px; }
+  }
+  .catcard.hl { animation: hlpulse .45s ease-out 2; }
+  /* 움직임을 줄이라고 한 사람에게는 안 뛴다 — 자리는 스크롤이 이미 알려 준다. */
+  @media (prefers-reduced-motion: reduce) {
+    .catcard.hl { animation: none; }
+  }
+  .catcard input:focus, .catcard select:focus, .catcard textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .catcard .meta { font-size: 11px; color: var(--dim); display: flex; gap: 7px; flex-wrap: wrap; }
+  /* **시야로 가는 길이 눈에 보여야 한다.** 그림에도 링크가 걸려 있지만 그것은
+     말풍선으로만 알 수 있다 — 크롭 화면은 도구줄에 한 줄 적어 두었다. */
+  .catcard .meta .togroup { color: var(--accent); }
+  /* **`[disabled]` 를 CSS 로 감추지 않는다** — 브라우저가 실제로 못 누르게 하는
+     것이 잠그는 것이고, 여기는 그것이 잠갔다는 표시만 한다 (DiaRUGA 051). */
+  .catcard input[disabled], .catcard select[disabled], .catcard textarea[disabled] {
+    opacity: .55; cursor: not-allowed;
+  }
+  /* 칩 줄에 섞여 서므로 칩과 같은 높이로 둔다 — 혼자 튀면 거르개가 아니라
+     설정처럼 읽힌다. */
+  .fragtoggle { display: flex; align-items: center; }
+  .fragtoggle label {
+    display: flex; gap: 5px; align-items: center; cursor: pointer;
+    font-size: 12px; color: var(--dim);
+  }
+  .fragtoggle input { margin: 0; cursor: pointer; }
+  .catsearch { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .catsearch input {
+    font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    min-width: 22ch;
+  }
+  .catsearch input:focus { outline: none; border-color: var(--accent); }
+  .catbar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .catprog { flex: none; font-size: 12.5px; }
+  .catprog b { color: var(--accent); }
+  .catprog i { display: inline-block; width: 90px; height: 5px; border-radius: 3px;
+               background: var(--line); overflow: hidden; vertical-align: middle;
+               margin: 0 6px; }
+  .catprog i s { display: block; height: 100%; background: var(--accent); }
+
+  /* --- P16: 고르기 · 지우기 · 묶음 풀기 ----------------------------------- */
+  /* 고르는 칸은 **그림 위에** 얹는다 — 오른쪽 칸에 두면 편집칸 다섯이 밀린다. */
+  .catcard .pick { position: absolute; left: 5px; top: 5px; z-index: 2;
+                   margin: 0; cursor: pointer; }
+  .catcard.picked { border-color: var(--accent); }
+  /* **고르는 중에는 카드가 통째로 고르는 자리다** (DiaRUGA 188). 카드는 440px 인데
+     고르는 칸은 왼쪽 위 13px 이라, 여럿을 고르는 동안 손이 자꾸 그림(→ 시야로
+     이동)이나 편집칸(→ 그 개체에만 앉는 값)에 떨어진다.
+
+     **마우스만 막는 자리다** — 클릭이 카드에 닿아 고르는 것이 된다. 키보드로
+     오는 길(링크·단추에 포커스를 두고 Enter)은 스크립트가 막는다. 한쪽만
+     막으면 나머지가 조용히 열려 있다 (DiaRUGA 051).
+
+     고르는 칸은 `.catcard` 의 직계라 이 규칙 밖이다 — 그것까지 막으면 고르기를
+     시작한 자리에서 풀 수가 없다. */
+  body.picking .catcard { cursor: pointer; }
+  body.picking .catcard .pic,
+  body.picking .catcard .fld { pointer-events: none; }
+  /* 지운 카드는 **표시로만** 다르다. 색을 박지 않는다 — 테마가 둘이라
+     `#fff…` 을 박으면 어두운 쪽에서 덩어리가 된다 (DiaRUGA 107). */
+  .catcard.gone .pic img { opacity: .5; }
+  .catcard .act { display: flex; gap: 6px; margin-left: auto; }
+  .catcard .act button {
+    font: inherit; font-size: 10.5px; padding: 1px 7px; border-radius: 5px;
+    background: transparent; border: 1px solid var(--line); color: var(--dim);
+    cursor: pointer;
+  }
+  .catcard .act button:hover { border-color: var(--accent); color: var(--accent); }
+  .catcard .act button.danger:hover { border-color: var(--warn); color: var(--warn); }
+  .catcard .act button[disabled] { opacity: .55; cursor: progress; }
+  /* 묶음 멤버 — 배지를 누르면 펼쳐진다. 평소에는 자리를 안 먹는다. */
+  .catcard .members { font-size: 11px; color: var(--dim); display: grid; gap: 2px; }
+  .catcard .members[hidden] { display: none; }
+  .catcard .badgelink { color: var(--accent); background: none; border: none;
+                        font: inherit; font-size: 11px; padding: 0; cursor: pointer; }
+
+  /* 칩 줄에 서는 단추 하나 (DiaRUGA 185). `.chip` 은 `<a>` 들의 껍데기라 배경도 글꼴도
+     안 정해 놓았다 — `<button>` 에 그대로 씌우면 브라우저 기본 단추 모양이
+     그 자리만 튄다. 눌러서 걸러지는 칩들과 나란히 서므로 모양이 같아야 한다. */
+  button.chip {
+    background: none; font: inherit; font-size: 12px; cursor: pointer;
+  }
+
+  /* 일괄 띠 — 고른 것이 있을 때만 뜬다. 스크롤을 따라온다. */
+  .bulkbar {
+    position: sticky; top: 0; z-index: 6; margin: 0 0 10px;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 8px 10px; border-radius: 9px;
+    background: var(--panel); border: 1px solid var(--accent);
+  }
+  .bulkbar[hidden] { display: none; }
+  .bulkbar label { font-size: 11.5px; color: var(--dim); }
+  .bulkbar input[type=text], .bulkbar select {
+    font: inherit; font-size: 12.5px; padding: 3px 6px; border-radius: 6px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  .bulkbar .go {
+    font: inherit; font-size: 12px; padding: 3px 12px; border-radius: 999px;
+    background: var(--accent); border: 1px solid var(--accent); color: var(--bg);
+    cursor: pointer;
+  }
+  .bulkbar .go[disabled] { opacity: .55; cursor: not-allowed; }
+  .bulkbar .say { margin-left: auto; font-size: 11.5px; }
+  .bulkbar .say.warn { color: var(--warn); }
+
+  /* 도판 미리보기 (DiaRUGA 149).
+
+     **누를 때 뜨고, 누를 때까지 떠 있는다.** 도감 화면(`atlas.html`)의 미리보기는
+     마우스를 올리면 떴다가 비키면 사라지는데, 여기는 **개체와 도판을 번갈아 보며
+     맞추는 일**이라 그 사이에 사라지면 안 된다.
+
+     화면 오른쪽에 붙여 카드 격자를 밀지 않는다 — 카드 사이에 끼우면 그 줄이
+     통째로 다시 놓여 보고 있던 자리를 잃는다. */
+  .cpreview {
+    position: fixed; right: 12px; bottom: 12px; z-index: 30;
+    width: min(460px, 42vw); max-height: 86vh;
+    display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 8px; gap: 6px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  }
+  .cpreview[hidden] { display: none; }
+  .cpreview img { width: 100%; height: auto; object-fit: contain;
+                  min-height: 0; border-radius: 6px; background: var(--bg); }
+  .cpreview .chead { display: flex; gap: 8px; align-items: center;
+                     font-size: 12px; color: var(--dim); }
+  .cpreview .chead b { color: var(--fg); font-weight: 600; font-style: italic; }
+  .cpreview .chead .x { margin-left: auto; flex: none; cursor: pointer;
+                        background: transparent; border: 1px solid var(--line);
+                        color: var(--dim); border-radius: 6px;
+                        font: inherit; font-size: 11px; padding: 1px 7px; }
+  .cpreview .chead .x:hover { border-color: var(--accent); color: var(--accent); }
+  .cpreview.failed img { display: none; }
+  .cpreview .cap { font-size: 11.5px; color: var(--dim); }
+  .cpreview.failed .cap { color: var(--warn-fg); }
+</style>
+
+<div class="catbar">
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
+  {% if batch and batch.code %}
+    <span class="badge" title="카탈로그 번호의 꼬리입니다 — 번호만 보고도 어느 검출인지 알 수 있습니다">번호 꼬리 · {{ batch.code }}</span>
+  {% endif %}
+  {% comment %}
+    **파편은 이 숫자에 없다** — 파편에는 등급·자세를 안 매기므로 완료가 될 수
+    없고, 분모에 두면 진행률이 영영 100%에 못 닿는다. 완료는 종명·등급·자세가
+    다 찼을 때다(사용자 2026-08-11).
+  {% endcomment %}
+  <span class="catprog"
+        title="종명·등급·자세가 다 찬 개체입니다. 파편은 세지 않습니다">동정
+    <b>{{ n_named }}</b> / {{ n_all }}
+    <i><s style="width:{{ pct }}%"></s></i>{{ pct }}%</span>
+  {% comment %}
+    **왜 이만큼만 나오는가** (DiaRUGA P18). 카드 하나가 개체 하나가 되면서 **검토 안 한
+    시야는 카드가 없다** — 개체는 사람이 손대기 전까지 없고, 완료를 누르면 그
+    시야의 남은 마스크가 전부 개체가 된다.
+
+    **조용히 줄면 자료가 사라진 것으로 읽힌다** — 파편을 감출 때 몇 개를
+    감췄는지 적는 것과 같은 줄이다. 다 봤으면 안 적는다(글자만 는다).
+  {% endcomment %}
+  {% if n_done < n_vp %}
+    <span class="vpdone" title="개체는 사람이 손대기 전까지 없습니다. 검토 완료를 누르면 그 시야의 남은 마스크가 전부 개체가 되고 여기 옵니다">시야
+      <b>{{ n_done }}</b>/{{ n_vp }} 검토</span>
+  {% endif %}
+  <form class="catsearch" method="get">
+    {% if cls %}<input type="hidden" name="cls" value="{{ cls }}">{% endif %}
+    {% if show_frag %}<input type="hidden" name="frag" value="1">{% endif %}
+    {% if show_gone %}<input type="hidden" name="gone" value="1">{% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="번호 · 종명 · 코멘트">
+    {% if q %}<a class="chip" href="?{% if cls %}cls={{ cls }}{% endif %}{% if show_gone %}&amp;gone=1{% endif %}">지우기</a>{% endif %}
+  </form>
+</div>
+
+{% comment %}
+  **짚어 온 개체를 두고 하는 말** (DiaRUGA 149). 찾았으면 아무 말도 안 한다 — 카드에
+  표시가 붙어 있고, 됐다는 말을 한 줄 더 놓으면 그것이 화면의 첫 줄을 차지한다.
+  **못 찾았거나 자리를 옮겨 왔을 때만** 적는다.
+{% endcomment %}
+{% if hl_say %}<div class="note warn hlsay">{{ hl_say }}</div>{% endif %}
+
+{% if blocked %}
+  {% comment %}
+    **왜 못 적는가를 말한다.** 잠가 놓고 이유를 안 적으면 사람이 같은 일을 몇
+    번이고 다시 한다 (DiaRUGA 063). 그리고 **입력칸도 함께 잠근다** — 되는 것처럼 보이는
+    화면이 051 에서 37건을 잃은 자리다.
+  {% endcomment %}
+  <div class="note warn">{{ blocked }}</div>
+{% endif %}
+
+<div class="croptools">
+  <span class="dim">형태</span>
+  <a class="chip{% if not cls %} on{% endif %}"
+     href="?{% if q %}q={{ q }}{% endif %}{% if show_frag %}&frag=1{% endif %}{% if show_gone %}&gone=1{% endif %}">전체</a>
+  {% class_list as classes %}
+  {% for d in classes %}
+    <a class="chip{% if cls == d.key %} on{% endif %}"
+       href="?cls={{ d.key }}{% if q %}&q={{ q }}{% endif %}{% if show_frag %}&frag=1{% endif %}{% if show_gone %}&gone=1{% endif %}">{{ d.label }}</a>
+  {% endfor %}
+  {% for f in filters %}
+    <a class="chip{% if cls == f.key %} on{% endif %}"
+       href="?cls={{ f.key }}{% if q %}&q={{ q }}{% endif %}{% if show_frag %}&frag=1{% endif %}{% if show_gone %}&gone=1{% endif %}">{{ f.label }}</a>
+  {% endfor %}
+  {% comment %}
+    **파편은 기본으로 감춘다** (사용자 2026-08-11). 처음부터 다 내면 카드가
+    파편으로 덮여 동정할 것이 안 보인다 — 실측으로 살아 있는 교정의 65%가 파편이다.
+
+    **몇 개를 감췄는지 적는다** — "없다" 와 "감췄다" 를 사람이 구별해야 한다.
+    체크박스는 거르개(`cls`)·검색(`q`)을 숨은 칸으로 들고 가므로, 켜고 끄는
+    사이에 보고 있던 자리를 안 잃는다.
+  {% endcomment %}
+  {% comment %}
+    **지운 것을 보는 화면에는 이 체크박스를 안 둔다** (DiaRUGA P16). 거기서는 파편도
+    전부 내므로, 켜고 끌 수 있는 것처럼 보이면 눌러서 아무 일도 안 일어나는
+    자리가 된다 — 이 화면이 파편 칩에서 이미 피한 그 자리다.
+  {% endcomment %}
+  {% if not show_gone %}
+  <form method="get" class="fragtoggle">
+    {% if cls %}<input type="hidden" name="cls" value="{{ cls }}">{% endif %}
+    {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+    <label title="파편(원형조각·봉상조각)에는 등급·자세를 매기지 않습니다 — 동정 진행도에서도 빠집니다">
+      <input type="checkbox" name="frag" value="1"
+             {% if show_frag %}checked{% endif %}>
+      파편 보기{% if n_frag %} <span class="dim">({{ n_frag }})</span>{% endif %}
+    </label>
+  </form>
+  {% endif %}
+  {% comment %}
+    **지운 것은 따로 본다** (DiaRUGA P16 5.1). 카탈로그에서 지울 수 있게 되었으니
+    되살릴 자리가 같은 화면에 있어야 한다 — 되돌릴 수 없는 단추를 두지 않는다.
+
+    섞어서 내지 않는 것은 2026-08-10 방침 그대로다: 지운 것까지 한 목록에 내면
+    카드가 몇 배가 되고 동정할 것이 안 보인다.
+  {% endcomment %}
+  <a class="chip{% if show_gone %} on{% endif %}"
+     title="사람이 오검출로 지운 개체입니다 — 여기서 되살립니다"
+     href="?{% if show_gone %}{% if cls %}cls={{ cls }}&amp;{% endif %}{% if q %}q={{ q }}&amp;{% endif %}{% else %}gone=1{% if cls %}&amp;cls={{ cls }}{% endif %}{% if q %}&amp;q={{ q }}{% endif %}{% endif %}{% if show_frag %}&amp;frag=1{% endif %}">지운 것</a>
+  {% comment %}
+    **쪽 안에서만 고른다** (DiaRUGA 185). 일괄 편집은 카드마다 체크박스를 눌러 고르는
+    것뿐이라, 한 유형에 종명을 앉히려면 한 쪽 120번을 누르게 된다 — 유형
+    `chaetoceros` 개체 203개가 그 자리였다(사용자 2026-09-06).
+
+    **"전부" 가 쪽 밖을 뜻하지 않는다.** 거르개·검색이 걸린 채로 쪽을 넘어
+    고르면 **사람이 안 본 카드에 종명이 앉는다.** 서버의 `bulk` 가 한 쪽을
+    상한으로 둔 것과 같은 줄이다 (DiaRUGA P16 5.2 — "화면에 없는 것을 고를 수는 없다").
+    그래서 몇 개를 고르는지 단추에 적는다.
+
+    **지운 것을 보는 화면에는 안 둔다** — 거기엔 일괄 띠 자체가 없다.
+  {% endcomment %}
+  {% if not readonly and not show_gone and rows %}
+    <button type="button" class="chip pickall" aria-pressed="false"
+            title="지금 이 쪽에 놓인 카드만 고릅니다 — 거르개에 걸린 다른 쪽까지 가지 않습니다">
+      <span class="t">이 쪽 전부 고르기</span> <span class="dim">({{ rows|length }})</span>
+    </button>
+  {% endif %}
+  <span class="dim" style="margin-left:auto">
+    {% if show_gone %}지운 개체다 — 되살리면 동정하는 쪽으로 돌아간다
+    {% else %}번호 차례 · 그림이나 g번호를 누르면 그 시야로 간다{% endif %}
+  </span>
+</div>
+
+{% comment %}
+  **오프라인 동정기를 여기서 꺼낸다** (사용자 2026-09-07). 동정하는 화면에서
+  동정 도구를 꺼낸다 — 범위를 고르는 일은 이 슬라이드를 보면서 하는 일이다.
+  자동 처리 중이면 서버가 `off` 를 안 준다(그때 꺼내 봐야 반입이 막힌다).
+{% endcomment %}
+{# 오프라인 동정기(`_offline_pick.html`)는 5단계 #}
+
+{% if not rows %}
+  <div class="note">
+    {% if q %}“{{ q }}” 로 찾은 개체가 없다.
+    {% elif cls %}이 거르개에 걸리는 개체가 없다.
+    {% elif show_gone %}지운 개체가 없다.
+    {% else %}보여줄 개체가 없다.{% endif %}
+  </div>
+{% endif %}
+
+{% if not readonly and not show_gone %}
+{% comment %}
+  **여기만 `적용` 단추가 있다** (DiaRUGA P16 5.2). 카드의 칸들은 누르는 즉시 가는데
+  일괄이 그러면 유형을 고르는 순간 40장이 바뀌고 되돌릴 자리가 없다. 규칙이
+  다른 이유를 띠에 적는다.
+
+  **지우기는 여기 없다.** 되돌릴 수 있다 해도 한 번에 여러 장이 사라지는 단추는
+  누른 뒤에야 범위를 알게 된다 — 지우기는 카드마다 한 번씩 누른다.
+
+  **코멘트도 없다.** 같은 글을 여러 개체에 붙이는 것은 *이 개체을 두고 하는
+  말*(0036)이라는 그 칸의 뜻과 어긋난다.
+{% endcomment %}
+<div class="bulkbar" hidden>
+  <b class="n">고른 것 0개</b>
+  <label>종명</label>
+  <input type="text" class="species" list="species-seen" maxlength="120"
+         placeholder="비우면 안 고친다">
+  <label>유형</label>
+  <select class="cls">
+    <option value="">— 안 고친다</option>
+    {% for d in classes %}<option value="{{ d.key }}">{{ d.label }}</option>{% endfor %}
+  </select>
+  <label>등급</label>
+  <select class="grade">
+    <option value="">— 안 고친다</option>
+    {% for k, text in grades %}<option value="{{ k }}" title="{{ text }}">{{ k }}</option>{% endfor %}
+  </select>
+  <label>자세</label>
+  <select class="pose">
+    <option value="">— 안 고친다</option>
+    {% for k, text in poses %}<option value="{{ k }}">{{ text }}</option>{% endfor %}
+  </select>
+  <button type="button" class="go">고른 것에 적용</button>
+  <button type="button" class="clear badgelink">고르기 해제</button>
+  {# **잠근 것을 글자로 적는다** (DiaRUGA 188) — 눌러도 안 열리는 화면은 고장으로 읽힌다. #}
+  <span class="dim pickhint">카드를 누르면 골라진다 · 편집과 시야로 가는 길은 「고르기 해제」 뒤에</span>
+  <span class="say"></span>
+</div>
+{% endif %}
+
+{{ counted_keys|json_script:"counted-keys" }}
+<datalist id="species-seen">
+  {% for s in species_seen %}<option value="{{ s }}">{% endfor %}
+</datalist>
+
+<div class="cat">
+{% for r in rows %}
+  {% comment %}
+    **짚어 온 개체에 표시를 단다** (DiaRUGA 149). 검토 화면에서 우클릭으로 온 길이고,
+    표시가 없으면 사람은 120장 중 어느 카드를 보러 왔는지 다시 찾아야 한다 —
+    118 이 반대 방향에서 겪은 그 자리다.
+  {% endcomment %}
+  <div class="catcard{% if r.cls %} {{ r.cls }}{% endif %}{% if show_gone %} gone{% endif %}{% if hl_key and r.key == hl_key and r.image_id == hl_image %} hl{% endif %}"
+       data-gid="{{ r.group_id }}" data-image="{{ r.image_id }}" data-key="{{ r.key }}"
+       {% if r.link_id %}data-link="{{ r.link_id }}"{% endif %}>
+    {% if not readonly and not show_gone %}
+      {# 고르는 칸은 링크(`.pic`) **밖에** 둔다 — 안에 두면 누를 때 시야로 넘어간다. #}
+      <input type="checkbox" class="pick" title="일괄 편집에 고른다"
+             aria-label="일괄 편집에 고른다">
+    {% endif %}
+    {% comment %}
+      **무슨 표시인지 글자로 적는다** (DiaRUGA 150). 고르는 칸은 왼쪽 위라 자리가
+      안 겹친다. 검토 화면이 같은 자리에서 쓰는 문구를 그대로 쓴다 —
+      두 화면이 같은 일을 다르게 부르면 사람이 다른 일로 읽는다.
+    {% endcomment %}
+    {% if hl_key and r.key == hl_key and r.image_id == hl_image %}
+      <span class="hlmark">눌러서 오신 개체</span>
+    {% endif %}
+    {% comment %}
+      **개체를 들고 간다** (DiaRUGA 118). 시야만 열면 거기 개체가 수십 개라 어느 것을
+      보고 눌렀는지 다시 찾아야 했다 — `obj`(개체 키)와 `img`(그 개체가 있는
+      판)를 함께 보내면 검토 화면이 그 자리를 표시하고, 다른 판의 개체면
+      캐러셀을 그 판으로 옮긴다.
+
+      **둘이 함께 가야 한다.** 시야 하나에 판이 여럿이라(합성본 + 프레임마다
+      하나) 키만 보내면 지금 열린 판에서만 찾는다.
+    {% endcomment %}
+    <a class="pic" href="{% url 'group' slug r.group_id %}?obj={{ r.key|urlencode }}&amp;img={{ r.image_id|default_if_none:'' }}"
+       title="g{{ r.group_id }} · 장축 {{ r.major_um }} µm · 눌러서 그 시야로 — 이 개체를 표시합니다">
+      <span class="cimg">
+        <img loading="lazy" src="{% cropurl r.src_rel r.src_bbox 300 r.rot r.out %}"
+             alt="{{ r.catalog_no|default:r.key }}">
+        {% if r.sb %}<span class="csb" style="width:{{ r.sb.pct }}%"><b></b>{{ r.sb.label }}</span>{% endif %}
+      </span>
+    </a>
+    <div class="fld">
+      {% if r.catalog_no %}
+        {% comment %}
+          **번호가 어느 판의 것인지 적는다** (DiaRUGA P18). 카드는 개체인데 번호는 판정
+          하나의 이름이라, 안 적으면 `f03` 이 카드 전체를 설명하는 것처럼
+          읽힌다 — 이 개체는 판 넷에 걸쳐 있고 그림은 대표(다른 판)일 수 있다.
+
+          **이 줄의 번호일 때는 안 적는다** — 늘 적으면 글자만 는다.
+        {% endcomment %}
+        <div class="no"><span class="v">{{ r.catalog_no }}</span>
+          {% if not r.no_here %}<span class="nofrom"
+            title="번호는 판정 하나의 이름입니다. 이 개체의 다른 판 번호로도 찾을 수 있습니다"
+            >{% if r.no_from is not None %}프레임 {{ r.no_from }}{% else %}합성본{% endif %} 기준</span>{% endif %}
+          <button type="button" class="copy" title="번호 복사">복사</button></div>
+      {% else %}
+        <div class="no none" title="{{ r.catalog_why }}">번호 없음 — {{ r.catalog_why }}</div>
+      {% endif %}
+      {% comment %}
+        **종명 칸이 도감을 안다** (DiaRUGA 149). 자동완성 목록에 `AtlasEntry` 의 이름이
+        섞여 오고(아래 스크립트가 `api/atlas/suggest` 에 묻는다), 적힌 이름이
+        도감의 어느 자리이면 그 옆에 `도판` 이 뜬다.
+
+        **가두는 것이 아니다.** 도감에 없는 이름도 그대로 적힌다 — 화석속은
+        등록부가 성글고 색인도 아직 절반이다. 없으면 단추가 안 뜰 뿐이다.
+
+        `data-plate` 는 **미리 볼 쪽의 상대경로**다. 축소본 주소를 서버가 미리
+        만들면 카드마다 `stat` 이 나가 한 판에 120번이 된다(`atlas.page_url`
+        머리말과 같은 줄) — 경로만 내려보내고 띄울 때 주소를 만든다.
+      {% endcomment %}
+      <div class="row"><label>종명</label>
+        <input type="text" class="species" list="species-seen" value="{{ r.species }}"
+               maxlength="120"
+               {% if readonly %}disabled{% endif %}>
+        <a class="plate chip" href="{{ r.atlas_hit.plate.plate_url }}"
+           data-plate="{{ r.atlas_hit.plate.plate_rel }}"
+           data-label="{{ r.atlas_hit.value }}{% if r.atlas_hit.plate.volume %} · {{ r.atlas_hit.plate.volume }}{% endif %} · 도판 p.{{ r.atlas_hit.plate.pdf_plate_page }}"
+           title="이 이름이 실린 도판을 옆에 띄운다"
+           {% if not r.atlas_hit.plate %}hidden{% endif %}>도판</a></div>
+      <div class="row"><label>유형</label>
+        <select class="cls" {% if readonly %}disabled{% endif %}>
+          <option value="">—</option>
+          {% for d in classes %}
+            <option value="{{ d.key }}"{% if r.cls == d.key %} selected{% endif %}>{{ d.label }}</option>
+          {% endfor %}
+        </select></div>
+      {% comment %}
+        **등급·자세는 완형에만 매긴다** — 파편으로 지정된 개체의 카드에는 두 칸이
+        아예 안 뜬다. 파편은 완형을 유추할 수 있어도 확실하지 않고, 무엇보다 한
+        개체로 인정하는 규칙을 만족하지 못한 것이라 우수성을 물을 자리가 아니다.
+        **분류가 없는 것은 보인다** — 매기는 순서를 강제하지 않는다.
+      {% endcomment %}
+      <div class="row gp"{% if r.cls and r.cls not in counted_keys %} hidden{% endif %}>
+        <label>등급</label>
+        <select class="grade" title="A 동정키도 완형도 잘 드러난다 · B 완형이나 형태가 덜 드러난다(또는 상태가 나쁘나 동정키가 남았다) · C 완형도 동정키도 잘 안 드러난다"
+                {% if readonly %}disabled{% endif %}>
+          <option value="">—</option>
+          {% for k, text in grades %}
+            <option value="{{ k }}" title="{{ text }}"{% if r.grade == k %} selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+        <label class="l2">자세</label>
+        <select class="pose" title="묶인 판들이 이 값을 나눠 갖습니다 — 초점을 옮겨도 자세는 그대로입니다"
+                {% if readonly %}disabled{% endif %}>
+          <option value="">—</option>
+          {% for k, text in poses %}
+            <option value="{{ k }}"{% if r.pose == k %} selected{% endif %}>{{ text }}</option>
+          {% endfor %}
+        </select></div>
+      <div class="row"><label>코멘트</label>
+        <textarea class="note" rows="1" maxlength="500"
+                  {% if readonly %}disabled{% endif %}>{{ r.note }}</textarea></div>
+      <div class="meta">
+        <a class="togroup" href="{% url 'group' slug r.group_id %}?obj={{ r.key|urlencode }}&amp;img={{ r.image_id|default_if_none:'' }}"
+           title="이 개체가 있는 시야를 열고 그 개체를 표시한다">g{{ r.group_id }} →</a>
+        <span>{{ r.major_um }} µm</span>
+        {% if r.frame_seq is not None %}<span>프레임 {{ r.frame_seq }}</span>{% endif %}
+        {% if r.linked_n %}
+          {% if readonly or show_gone %}
+            <span title="같은 개체로 묶인 판 {{ r.linked_n }}장 중 가장 크게 보이는 것을 그린다">묶음 {{ r.linked_n }}</span>
+          {% else %}
+            {# **푸는 것만 한다** (DiaRUGA P16 3.2) — 묶을 상대는 이 화면에 없다. #}
+            {# 절대경로를 박지 말 것 — 서브경로 아래에서 돈다. 주소는 서버가 만든다. #}
+            <button type="button" class="badgelink unlink"
+                    data-url="{% url 'save_link' slug r.group_id %}"
+                    title="같은 개체로 묶인 판 {{ r.linked_n }}장 중 가장 크게 보이는 것을 그린다 — 눌러서 푼다">묶음 {{ r.linked_n }} 풀기</button>
+          {% endif %}
+        {% endif %}
+        {% if r.manual %}<span class="warn">수동 복구</span>{% endif %}
+        <span class="say"></span>
+        {% if not readonly %}
+          <span class="act">
+            {% if show_gone %}
+              <button type="button" class="restore">되살린다</button>
+            {% else %}
+              <button type="button" class="danger remove"
+                      title="오검출로 지웁니다 — 「지운 것」 칩에서 되살릴 수 있습니다">지운다</button>
+            {% endif %}
+          </span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+
+{% if prev_url or next_url %}
+<div class="croptools" style="margin-top:14px">
+  {% if prev_url %}<a class="chip" href="{{ prev_url }}">← 이전 {{ per_page }}개</a>{% endif %}
+  {% if next_url %}<a class="chip" href="{{ next_url }}">다음 {{ per_page }}개 →</a>{% endif %}
+  <span class="dim">한 페이지에 {{ per_page }}개까지 — 크롭이 개체마다 한 장이라 그 이상은 무겁다</span>
+</div>
+{% endif %}
+
+{% comment %}
+  도판 미리보기 판 (DiaRUGA 149). **비어 있는 채로 놓아 둔다** — 무엇을 띄울지는 사람이
+  누를 때 정해지고, 서버가 미리 고르면 카드마다 `stat` 이 나간다.
+
+  판을 **하나만** 둔다. 카드마다 두면 120개의 빈 판이 문서에 놓이고, 두 개가
+  동시에 뜨면 어느 것이 지금 보는 것인지 화면에서 안 갈린다.
+{% endcomment %}
+<div class="cpreview" id="cpreview" hidden>
+  <div class="chead"><b id="cpreview-name"></b>
+    <a class="chip" id="cpreview-open" href="" title="도감 화면에서 크게 본다">도감에서 →</a>
+    <button type="button" class="x" id="cpreview-x" title="닫는다 (Esc)">닫기</button></div>
+  <img alt="" id="cpreview-img">
+  <div class="cap" id="cpreview-cap"></div>
+</div>
+
+<script>
+(function () {
+  // **읽기 전용이면 배선을 아예 안 건다** (DiaRUGA 051). 입력칸은 `disabled` 라 브라우저가
+  // 막지만, 배선까지 걸어 두면 나중에 누가 `disabled` 를 떼는 순간 조용히 저장이
+  // 나간다. **막는 자리를 하나로 둔다.**
+  var READONLY = {{ readonly|yesno:"true,false" }};
+
+  // 절대경로를 박지 말 것 — 서브경로 `/DiaRUGA/` 아래에서 돈다 (CLAUDE.md).
+  var SAVE = "{% url 'save_catalog' slug %}";
+
+  // 완형인 분류들. **여기 없는 것이 파편이고, 파편에는 등급·자세를 안 매긴다.**
+  // 화면이 감추는 것은 표시일 뿐이고 막는 것은 서버다 (`check_grade_pose`) —
+  // 화면에서 막는 것은 막는 것이 아니다 (DiaRUGA 063).
+  var COUNTED = JSON.parse(document.getElementById("counted-keys").textContent);
+  function isFrag(v) { return !!v && COUNTED.indexOf(v) < 0; }
+
+  // **체크박스는 누르는 즉시 간다.** 옆에 "적용" 단추를 두면 누르는 것을 잊고
+  // 안 바뀐 화면을 보게 된다 — 거르개 칩은 누르면 바로 가는데 이것만 다르면
+  // 사람은 고장으로 읽는다. JS 가 없으면 폼이라 엔터로도 간다.
+  var frag = document.querySelector(".fragtoggle input");
+  if (frag) {
+    frag.addEventListener("change", function () { frag.form.submit(); });
+  }
+
+  document.querySelectorAll(".catcard .copy").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var t = b.parentNode.querySelector(".v").textContent;
+      navigator.clipboard.writeText(t).then(function () {
+        b.textContent = "복사됨";
+        setTimeout(function () { b.textContent = "복사"; }, 1200);
+      });
+    });
+  });
+
+  // --- 도판 미리보기 (DiaRUGA 149) --------------------------------------------------
+  //
+  // **읽기 전용에서도 돈다.** 보는 일이지 고치는 일이 아니다 — 051 이 막으라고
+  // 한 것은 *되는 것처럼 보이는데 저장이 안 되는* 자리이지, 읽기까지가 아니다.
+  //
+  // **주소는 여기서 만든다.** 서버가 축소본 주소를 미리 만들면 카드마다 `stat`
+  // 이 나가 한 판에 120번이 된다(`atlas.page_url` 머리말). `v=`(수정 시각)를
+  // 안 붙이는데, 도판 PNG 는 한 번 굽고 안 바뀌는 것이라 옛 그림을 붙잡을 일이
+  // 없다 (`atlas.html` 의 미리보기와 같은 판단이다).
+  var IMG = "{% url 'image' %}";
+  var pv = document.getElementById("cpreview");
+  var pvImg = document.getElementById("cpreview-img");
+  var pvName = document.getElementById("cpreview-name");
+  var pvCap = document.getElementById("cpreview-cap");
+  var pvOpen = document.getElementById("cpreview-open");
+  var pvCur = null;
+
+  function pvHide() {
+    pv.hidden = true;
+    if (pvCur) { pvCur.classList.remove("on"); pvCur = null; }
+  }
+
+  function pvShow(a) {
+    var rel = a.getAttribute("data-plate");
+    if (!rel) return;
+    if (pvCur) pvCur.classList.remove("on");
+    pvCur = a;
+    a.classList.add("on");
+    var label = a.getAttribute("data-label") || "";
+    // **이름과 자리를 갈라 적는다** — 판에 이름만 있으면 어느 도감의 몇 쪽을
+    // 보고 있는지 모른 채 비교하게 된다.
+    var cut = label.indexOf(" · ");
+    pvName.textContent = cut < 0 ? label : label.slice(0, cut);
+    pvCap.textContent = cut < 0 ? "" : label.slice(cut + 3);
+    pvOpen.setAttribute("href", a.getAttribute("href") || "");
+    pv.classList.remove("failed");
+    pvImg.setAttribute("src", IMG + "?p=" + encodeURIComponent(rel) + "&w=900");
+    pv.hidden = false;
+  }
+
+  // **"아직 안 떴다" 를 말한다.** 빈 칸을 남기면 원본에 그 쪽이 없는 것으로
+  // 읽힌다 — 도판은 `tools/render_atlas_pages.py` 가 굽고, 덜 구운 도감이 있다.
+  pvImg.addEventListener("error", function () {
+    pv.classList.add("failed");
+    pvCap.textContent = "이 쪽은 아직 안 떴습니다 — 도판을 굽는 중일 수 있습니다";
+  });
+
+  document.getElementById("cpreview-x").addEventListener("click", pvHide);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") pvHide();
+  });
+
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest(".catcard .plate");
+    if (!a) return;
+    // 새 탭으로 여는 것은 브라우저에 맡긴다 — 도감 화면으로 가는 길을 뺏지 않는다.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    // 같은 것을 다시 누르면 닫는다 — 여는 것과 닫는 것이 한 자리에 있어야 한다.
+    if (pvCur === a) { pvHide(); return; }
+    pvShow(a);
+  });
+
+  // --- 짚어 온 개체를 화면 안으로 (DiaRUGA 150) --------------------------------------
+  //
+  // **쪽을 맞추는 것만으로는 부족하다.** 149 는 그 카드가 있는 쪽을 열어 놓고
+  // 거기서 끝났는데, 한 판이 120장이라 **카드가 화면 밖이면 사람이 여전히
+  // 훑어 찾는다** (사용자 2026-08-25).
+  //
+  // **차례를 바꾸지 않는다.** 그 카드를 맨 위로 올리는 길도 있었지만,
+  // 카탈로그는 *번호를 따라 읽는 표*라(`data.catalog_rows` 머리말) 한 장을
+  // 앞으로 빼면 그 성질이 깨지고 **옆 개체와 견주는 일**도 못 하게 된다.
+  //
+  // **그림이 늦게 뜨면 자리가 밀린다.** 카드 그림은 `loading="lazy"` 이고
+  // 높이가 저마다 달라, 한 번 맞춰 놓아도 위쪽 그림이 뜨면서 목표가 내려간다.
+  // 그래서 그 카드의 그림이 뜬 뒤와 **나머지가 다 뜬 뒤**에 한 번씩 더 맞춘다.
+  //
+  // **사람이 스크롤을 시작했으면 안 건드린다.** 보고 있던 자리를 빼앗는 것이
+  // 못 찾는 것보다 나쁘다 — 검토 화면이 배율을 안 되돌리는 것과 같은 줄이다.
+  //
+  // **읽기 전용에서도 돈다** — 보는 일이지 고치는 일이 아니다.
+  (function () {
+    var mark = document.querySelector(".catcard.hl");
+    if (!mark) return;
+    var moved = false;
+    // `scroll` 은 안 듣는다 — 우리가 옮긴 것도 그 이벤트를 내므로, 그것을
+    // 사람의 손으로 읽으면 첫 번째 맞추기가 나머지를 스스로 껐을 것이다.
+    ["wheel", "touchstart", "keydown", "pointerdown"].forEach(function (ev) {
+      window.addEventListener(ev, function () { moved = true; },
+                              {passive: true, once: true});
+    });
+    function bring() {
+      if (moved) return;
+      mark.scrollIntoView({block: "center", inline: "nearest"});
+    }
+    bring();
+    var img = mark.querySelector(".pic img");
+    if (img && !img.complete) { img.addEventListener("load", bring); }
+    window.addEventListener("load", bring);
+  })();
+
+  if (READONLY) return;
+
+  function csrf() {
+    var m = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/);
+    return m ? m[2] : "";
+  }
+
+  // **보내는 자리가 넷이다** (카드 저장 · 지우기 · 되살리기 · 일괄). 문이 하나라
+  // 보내는 함수도 하나여야 한다 — 갈래마다 따로 쓰면 CSRF·`credentials` 같은
+  // 것을 한 자리에서 빠뜨리고, 그 갈래만 조용히 안 간다.
+  function post(body, keepalive) {
+    return fetch(SAVE, {method: "POST", credentials: "same-origin",
+                        keepalive: !!keepalive,
+                        headers: {"Content-Type": "application/json",
+                                  "X-CSRFToken": csrf()},
+                        body: JSON.stringify(body)});
+  }
+
+  // 페이지를 떠날 때 **아직 안 보낸 것을 마저 보낸다.**
+  //
+  // 카드의 그림과 g번호가 그 시야로 가는 링크라서, **적다 말고 누르는 일이 잦다.**
+  // 글자 칸은 900ms 쉬거나 자리를 떠야 보내는데, 링크를 누르면 그 사이에 페이지가
+  // 사라진다 — 종명을 치고 바로 시야로 넘어가면 **그 한 줄이 없던 일이 된다.**
+  // 저장했다는 표시도 못 봤으니 사람은 적은 줄 안다.
+  //
+  // `keepalive` 를 켜면 문서가 사라져도 요청이 끝까지 간다.
+  var flushers = [];
+  window.addEventListener("pagehide", function () {
+    flushers.forEach(function (f) { f(); });
+  });
+
+  // 카드마다의 상태를 일괄 띠가 되찾을 수 있게 모아 둔다. **일괄이 저장한 값도
+  // 카드의 `known` 에 앉혀야 한다** — 안 앉히면 그 카드의 다음 저장이 화면에
+  // 남은 옛 값을 "안 바뀐 것" 으로 보고 안 보내거나, 반대로 매번 보낸다.
+  var cards = [];
+
+  // --- 종명 자동완성 · 도판 잇기 (DiaRUGA 149) --------------------------------------
+  //
+  // **이미 쓴 이름만으로는 처음 적는 사람에게 아무것도 못 준다** — 종명이 0건
+  // 이면 `species-seen` 도 빈다. 도감(`AtlasEntry`)은 반입만 되어 있으면
+  // 처음부터 차 있으므로 그것을 같은 목록에 섞는다.
+  //
+  // **한 목록에 둔다.** 칸 하나가 datalist 를 하나만 가리킬 수 있기도 하고,
+  // 무엇보다 **적는 사람이 보는 것은 "이 이름을 써도 되는가" 하나**다 — 출처가
+  // 궁금하면 `label` 에 적혀 있다.
+  //
+  // **가두지 않는다.** 도감에 없는 이름도 그대로 적힌다(`atlas_suggest` 머리말).
+  var SUGGEST = "{% url 'taxon_suggest' %}";
+  var dl = document.getElementById("species-seen");
+  var atlasBy = {};                 // 소문자 이름 → {rel, url, label}
+  var sTimer = null, sLast = "";
+
+  function remember(row) {
+    // 도판이 없는 항목도 적어 둔다 — 그래야 그 이름을 골랐을 때 단추가 **안**
+    // 뜬다. 안 적어 두면 옛 값의 단추가 그대로 남는다.
+    var pl = row.plate;
+    atlasBy[String(row.value).trim().toLowerCase()] = pl ? {
+      rel: pl.plate_rel, url: pl.plate_url,
+      label: row.value + (pl.volume ? " · " + pl.volume : "")
+             + " · 도판 p." + pl.pdf_plate_page
+    } : {};
+  }
+
+  // 서버가 이미 그려 준 단추들을 먼저 적어 둔다 — 사람이 값을 지웠다 되돌리면
+  // 그때도 단추가 살아나야 한다.
+  document.querySelectorAll(".catcard .plate[data-plate]").forEach(function (a) {
+    var inp = a.closest(".catcard").querySelector(".species");
+    var v = inp && inp.value.trim();
+    if (!v) return;
+    atlasBy[v.toLowerCase()] = {rel: a.getAttribute("data-plate"),
+                                url: a.getAttribute("href"),
+                                label: a.getAttribute("data-label")};
+  });
+
+  function updatePlate(card) {
+    var a = card.querySelector(".plate");
+    var inp = card.querySelector(".species");
+    if (!a || !inp) return;
+    var hit = atlasBy[inp.value.trim().toLowerCase()];
+    if (!hit || !hit.rel) {
+      // 지금 그 판을 띄워 두고 있었으면 함께 닫는다 — 안 닫으면 화면에는 옛
+      // 이름의 도판이 남고, 그것을 지금 개체의 것으로 읽는다.
+      if (pvCur === a) pvHide();
+      a.hidden = true;
+      return;
+    }
+    a.hidden = false;
+    a.setAttribute("href", hit.url);
+    a.setAttribute("data-plate", hit.rel);
+    a.setAttribute("data-label", hit.label);
+  }
+
+  function suggest(v, card) {
+    var q = v.trim();
+    // 두 글자부터. 한 글자로는 2천 행의 절반이 걸려 목록이 뜻을 잃는다
+    // (서버도 같은 문턱이다 — 여기서 안 막으면 그 요청이 그냥 헛간다).
+    if (q.length < 2 || q === sLast) return;
+    sLast = q;
+    fetch(SUGGEST + "?q=" + encodeURIComponent(q), {credentials: "same-origin"})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        // ForGIA: 도감 대신 **`Taxon` 표(WoRMS 반입)** 에서 찾는다. 켠 학명
+        // (`species_seen`, 서버가 그려 준 것)은 그대로 두고 찾은 것만 갈아 끼운다.
+        var rows = (j && j.names) || [];
+        dl.querySelectorAll("option[data-atlas]").forEach(function (o) { o.remove(); });
+        rows.forEach(function (row) {
+          var o = document.createElement("option");
+          o.value = row.name;
+          o.setAttribute("data-atlas", "1");
+          o.label = (row.rank || "") + (row.valid && row.valid !== row.name ? " · 이명 → " + row.valid : "")
+                    + (row.extinct ? " · 화석" : "");
+          dl.appendChild(o);
+        });
+        if (card) updatePlate(card);
+      })
+      .catch(function () { /* 자동완성은 거드는 것이라 조용히 지나간다 */ });
+  }
+
+  document.querySelectorAll(".catcard").forEach(function (card) {
+    var say = card.querySelector(".say");
+    var fields = {
+      species: card.querySelector(".species"),
+      cls: card.querySelector(".cls"),
+      note: card.querySelector(".note"),
+      grade: card.querySelector(".grade"),
+      pose: card.querySelector(".pose"),
+    };
+    var gprow = card.querySelector(".row.gp");
+    // **잠그는 까닭이 둘이다** (DiaRUGA 188) — 지워서(`lock`)와 고르는 중이라서
+    // (`pickLock`). 한 칸에 담으면 고르기를 푸는 순간 **지운 카드의 칸이 다시
+    // 쳐지는 상태**가 된다 — 거기 적은 것은 아무 데도 안 남는다(051 과 같은 줄).
+    var goneOff = false, pickOff = false;
+
+    function applyLock() {
+      var off = goneOff || pickOff;
+      Object.keys(fields).forEach(function (k) { fields[k].disabled = off; });
+    }
+    // 마지막으로 **서버가 안다고 확인된** 값. 200 이 곧 "그렇게 저장됐다" 는
+    // 뜻은 아니라서, 보낸 것이 아니라 돌아온 것을 여기 적는다.
+    var known = {};
+    Object.keys(fields).forEach(function (k) { known[k] = fields[k].value; });
+    // 요청을 겹치지 않게 한 줄로 세운다. 겹치면 **먼저 보낸 것의 응답이 나중에
+    // 친 글자를 덮는다** — 실제로 그랬다: 종명을 저장한 응답이 돌아오면서, 그
+    // 사이에 친 코멘트를 서버가 아는 빈 값으로 되돌렸다. 화면은 "저장됨" 이라
+    // 적혀 있고 새로고침하면 코멘트만 없다.
+    var inflight = false, pending = false, timer = null;
+
+    function diff() {
+      // **안 바뀐 칸은 안 보낸다.** 서버는 없는 칸을 "안 고친다" 로 받는다 —
+      // 빈 것과 없는 것을 가르는 그 규칙의 클라이언트 쪽 짝이다.
+      var body = null;
+      Object.keys(fields).forEach(function (k) {
+        if (fields[k].value !== known[k]) {
+          body = body || {};
+          body[k] = fields[k].value;
+        }
+      });
+      return body;
+    }
+
+    function stamp(body) {
+      body.gid = +card.dataset.gid;
+      body.image = +card.dataset.image;
+      body.key = card.dataset.key;
+      return body;
+    }
+
+    function flush() {
+      // 떠나는 참이다 — **줄 세우기를 건너뛰고** 지금 다른 것만 보낸다.
+      // 응답은 안 본다: 그것을 받을 화면이 이미 없다.
+      clearTimeout(timer);
+      var body = diff();
+      if (body) { post(stamp(body), true); }
+    }
+
+    function done() {
+      inflight = false;
+      if (pending || diff()) { pending = false; send(); }
+    }
+
+    function send() {
+      if (inflight) { pending = true; return; }
+      var body = diff();
+      if (!body) return;
+      // 보낸 순간의 값. 응답이 왔을 때 **그 뒤로 사람이 더 쳤는지**를 이것으로 안다.
+      var sent = {};
+      Object.keys(fields).forEach(function (k) { sent[k] = fields[k].value; });
+      stamp(body);
+
+      inflight = true;
+      card.classList.remove("saved");
+      card.classList.add("dirty");
+      post(body, false)
+        .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (p) {
+          if (!(p[0] && p[1].ok)) {
+            card.classList.remove("dirty");
+            say.textContent = "저장 실패 — " + (p[1].error || "다시 시도하세요");
+            say.className = "say warn";
+            return;
+          }
+          // **돌아온 것을 통째로 다시 적는다.** 칸을 하나 더할 때 여기를
+          // 빠뜨리면 그 칸은 `undefined` 와 비교되어 저장할 것이 없는데도 매번
+          // 요청이 나간다.
+          known = {species: p[1].species, cls: p[1].cls, note: p[1].note,
+                   grade: p[1].grade, pose: p[1].pose};
+          Object.keys(fields).forEach(function (k) {
+            // **보낸 뒤로 사람이 더 친 칸은 안 건드린다.** 덮으면 방금 친 글자가
+            // 사라지고, 화면에는 "저장됨" 이 적혀 있다. 그 칸은 `done()` 이
+            // 다시 보낸다.
+            if (fields[k].value === sent[k]) { fields[k].value = known[k]; }
+          });
+          card.classList.remove("dirty");
+          card.classList.add("saved");
+          // **묶음에 번진 것을 말한다.** 유형은 묶인 다른 판에도 함께 앉는데
+          // (DiaRUGA 104), 그 판은 이 화면에 없어서 **번졌는지 알 방법이 없다** — 안
+          // 적으면 사람이 판을 넘겨 다시 지정한다(실제로 그 보고를 받았다).
+          var msg = p[1].spread ? "저장됨 · 묶음 " + p[1].spread + "장에 함께"
+                                : "저장됨";
+          say.textContent = msg;
+          say.className = "say";
+          setTimeout(function () {
+            if (say.textContent === msg) { say.textContent = ""; }
+          }, 2200);
+        })
+        .catch(function () {
+          card.classList.remove("dirty");
+          say.textContent = "저장 실패 — 연결을 확인하세요";
+          say.className = "say warn";
+        })
+        .then(done, done);
+    }
+
+    // **유형을 파편으로 바꾸면 등급·자세를 어떻게 할지 묻는다.**
+    //
+    // 조용히 지우면 사람이 눈으로 매긴 것이 사라지고(재생성 불가), 그냥 두면
+    // 서버가 409 로 물려 **저장이 통째로 안 된다** — 화면에는 "저장 실패" 만
+    // 뜨고 무엇 때문인지 알 수 없다. 그래서 여기서 고르게 한다.
+    //
+    // **이 배선이 아래 일반 배선보다 먼저 걸려야 한다** — 같은 `change` 를 듣고
+    // 순서대로 도므로, 취소했을 때 값을 되돌려 놓아야 뒤이어 도는 `send` 가
+    // "바뀐 것이 없다" 로 보고 아무것도 안 보낸다.
+    fields.cls.addEventListener("change", function () {
+      var frag = isFrag(fields.cls.value);
+      if (frag && (fields.grade.value || fields.pose.value)) {
+        if (!window.confirm("파편에는 등급·자세를 매기지 않습니다.\n"
+                            + "이 개체에 매긴 등급·자세를 지우고 파편으로 "
+                            + "바꿀까요?")) {
+          fields.cls.value = known.cls;          // 되돌린다 — 아무것도 안 보낸다
+          gprow.hidden = isFrag(known.cls);
+          return;
+        }
+        fields.grade.value = "";
+        fields.pose.value = "";
+      }
+      gprow.hidden = frag;
+    });
+
+    Object.keys(fields).forEach(function (k) {
+      var el = fields[k];
+      // 셀렉트는 고르는 즉시, 글자 칸은 자리를 뜨거나 잠깐 멈추면.
+      el.addEventListener("change", send);
+      el.addEventListener("blur", send);
+      // **종명은 치는 도중에 안 보낸다** (ForGIA). 서버가 `Taxon` 표에 없는
+      // 이름을 거절하므로(`resolve_taxon`) 글자마다 보내면 치는 내내 "없는
+      // 학명" 이 뜬다 — 다 치고 칸을 떠나거나 목록에서 고른 값만 간다.
+      if (el.tagName !== "SELECT" && k !== "species") {
+        el.addEventListener("input", function () {
+          clearTimeout(timer);
+          timer = setTimeout(send, 900);
+        });
+      }
+    });
+    // 치는 동안 도감을 묻는다 (DiaRUGA 149). **저장과 다른 타이머다** — 저장은 900ms
+    // 쉬어야 나가지만(친 것을 다 보내지 않으려고) 자동완성은 그보다 빨리 떠야
+    // 목록이 거들 수 있다.
+    fields.species.addEventListener("input", function () {
+      clearTimeout(sTimer);
+      sTimer = setTimeout(function () { suggest(fields.species.value, card); }, 250);
+    });
+    fields.species.addEventListener("change", function () { updatePlate(card); });
+    fields.species.addEventListener("blur", function () { updatePlate(card); });
+
+    flushers.push(flush);
+
+    cards.push({
+      card: card, say: say, fields: fields,
+      id: function () { return stamp({}); },
+      picked: function () {
+        var p = card.querySelector(".pick");
+        return !!(p && p.checked);
+      },
+      // 서버가 돌려준 것을 카드에 앉힌다 — 카드 하나짜리 저장이 하는 것과 같다.
+      accept: function (j) {
+        known = {species: j.species, cls: j.cls, note: j.note,
+                 grade: j.grade, pose: j.pose};
+        Object.keys(fields).forEach(function (k) { fields[k].value = known[k]; });
+        gprow.hidden = isFrag(known.cls);
+        // **단추도 따라 간다** (DiaRUGA 149). 일괄로 종명을 앉혀 놓고 도판 단추가 옛
+        // 이름의 것으로 남으면, 눌러서 뜨는 도판이 이 개체의 것이 아니다.
+        updatePlate(card);
+        card.classList.remove("dirty");
+        card.classList.add("saved");
+      },
+      // 지운 카드는 **손댈 수 없어야 한다.** 잠그지 않으면 지워 놓은 개체에
+      // 종명을 적을 수 있고, 그 저장은 지운 것을 되살리지도 않는다 — 사람이
+      // 적은 것이 어디에도 안 보이는 상태가 된다 (051 과 같은 갈래다).
+      lock: function (on) {
+        goneOff = on;
+        applyLock();
+        card.classList.toggle("gone", on);
+      },
+      // **고르는 중에는 칸을 잠근다** (DiaRUGA 188). 마우스는 CSS 가 막지만 키보드는
+      // 여기서 막힌다 — 탭으로 칸에 들어가 치는 길이 남아 있으면, 일괄로 앉힐
+      // 참인 값이 그 개체에만 먼저 앉는다.
+      pickLock: function (on) { pickOff = on; applyLock(); },
+    });
+  });
+
+  // --- 지우기·되살리기 -----------------------------------------------------
+  //
+  // **층이 다르므로 문을 가른다** (116 · P16 4.2). 지우기는
+  // `(이미지, 묶음, mask_key)` 에 붙고 동정 다섯은 개체에 붙는다 — 한 payload 에
+  // 실으면 하나를 고르는 일이 다른 쪽까지 갈아치운다.
+  //
+  // **지운 자리에서 바로 되살릴 수 있게 둔다.** 카드를 화면에서 치우면 잘못
+  // 누른 사람이 「지운 것」 칩까지 가야 하는데, 그 사이에 무엇을 지웠는지
+  // 잊는다 (DiaRUGA P16 8절 — 카드에 단추가 붙으면 넘기다 잘못 누를 수 있다).
+  cards.forEach(function (c) {
+    var btn = c.card.querySelector(".remove, .restore");
+    if (!btn) return;
+
+    function send(act) {
+      var body = c.id();
+      body.act = act;
+      btn.disabled = true;
+      c.say.textContent = "";
+      // **`keepalive` 를 안 붙인다** — 사람이 누르고 결과를 기다리는 자리다.
+      post(body, false)
+        .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (p) {
+          btn.disabled = false;
+          if (!(p[0] && p[1].ok)) {
+            // **왜 못 했는지 그대로 옮긴다** — 묶여 있어서 거절된 것이 흔하고,
+            // 그때 서버는 몇 장이 걸렸는지까지 말한다 (DiaRUGA 063).
+            c.say.textContent = p[1].error || "다시 시도하세요";
+            c.say.className = "say warn";
+            return;
+          }
+          var gone = p[1].removed;
+          c.lock(gone);
+          btn.className = gone ? "restore" : "danger remove";
+          btn.textContent = gone ? "되살린다" : "지운다";
+          c.say.textContent = gone ? "지웠습니다" : "되살렸습니다";
+          c.say.className = "say";
+        })
+        .catch(function () {
+          btn.disabled = false;
+          c.say.textContent = "닿지 못했습니다 — 연결을 확인하세요";
+          c.say.className = "say warn";
+        });
+    }
+
+    btn.addEventListener("click", function () {
+      var act = btn.classList.contains("restore") ? "restore" : "remove";
+      // **등급·자세가 붙은 개체를 지우면 무결성 검사에 걸린다**
+      // (`check_db` "등급·자세가 살아 있는 개체에만 붙어 있다"). 판이 전부
+      // 오검출인데 등급이 남으면 *이 개체은 오검출이면서 A 다* 가 되고,
+      // 등급으로 학습 대상을 고르므로 그 모순이 그대로 자료 선택으로 간다.
+      //
+      // **그렇다고 여기서 지우지는 않는다.** 삭제는 되돌릴 수 있고 등급·자세는
+      // 사람이 눈으로 매긴 재생성 불가한 값이다 — 되돌릴 수 있는 일에 되돌릴 수
+      // 없는 일을 얹지 않는다. 무엇이 남는지 말하고 사람이 고른다.
+      if (act === "remove"
+          && (c.fields.grade.value || c.fields.pose.value)) {
+        if (!window.confirm("등급·자세가 매겨진 개체입니다.\n"
+                            + "지워도 그 값은 남습니다 — 오검출로 두려면 "
+                            + "되살린 뒤 등급·자세를 비우세요.\n\n"
+                            + "그대로 지울까요?")) { return; }
+      }
+      send(act);
+    });
+  });
+
+  // --- 묶음 풀기 -----------------------------------------------------------
+  //
+  // **푸는 것만 한다** (DiaRUGA P16 3.2). 묶음 멤버는 서로 다른 판이어야 하는데
+  // (`save_object_link`) 카탈로그는 시야마다 한 판만 카드로 내므로 **묶을 상대가
+  // 이 화면에 없다.** 푸는 데 필요한 것은 `link_id` 하나뿐이라 그것만 한다.
+  document.querySelectorAll(".catcard .unlink").forEach(function (btn) {
+    var card = btn.closest(".catcard");
+    var say = card.querySelector(".say");
+    btn.addEventListener("click", function () {
+      if (!window.confirm("이 묶음을 풉니다.\n"
+                          + "판들의 판단은 그대로 남고, 한 개체라는 묶음만 "
+                          + "없어집니다.")) { return; }
+      btn.disabled = true;
+      fetch(btn.dataset.url, {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrf()},
+        body: JSON.stringify({act: "unlink", link_id: +card.dataset.link}),
+      })
+        .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (p) {
+          btn.disabled = false;
+          if (!(p[0] && p[1].ok)) {
+            say.textContent = "못 풀었습니다 — " + (p[1].error || "다시 시도하세요");
+            say.className = "say warn";
+            return;
+          }
+          btn.remove();
+          card.removeAttribute("data-link");
+          say.textContent = "풀었습니다";
+          say.className = "say";
+        })
+        .catch(function () {
+          btn.disabled = false;
+          say.textContent = "닿지 못했습니다 — 연결을 확인하세요";
+          say.className = "say warn";
+        });
+    });
+  });
+
+  // --- 일괄 ----------------------------------------------------------------
+  var bar = document.querySelector(".bulkbar");
+  if (bar) {
+    var bfields = {species: bar.querySelector(".species"),
+                   cls: bar.querySelector(".cls"),
+                   grade: bar.querySelector(".grade"),
+                   pose: bar.querySelector(".pose")};
+    var go = bar.querySelector(".go");
+    var bsay = bar.querySelector(".say");
+    var bn = bar.querySelector(".n");
+
+    // 일괄 띠의 종명 칸도 같은 목록을 쓴다 (DiaRUGA 149) — 여기서만 안 되면 사람은
+    // 자동완성이 고장 난 줄로 읽는다. **도판 단추는 안 둔다**: 어느 개체를 두고
+    // 하는 말이 아니라 여러 개체에 한꺼번에 앉히는 값이라 띄울 자리가 없다.
+    if (bfields.species) {
+      bfields.species.addEventListener("input", function () {
+        clearTimeout(sTimer);
+        sTimer = setTimeout(function () { suggest(bfields.species.value, null); }, 250);
+      });
+    }
+
+    function picked() { return cards.filter(function (c) { return c.picked(); }); }
+
+    // **쪽에 놓인 고르는 칸 전부.** 한 자리에서 집는다 — 아래 셋(변화 감시 ·
+    // 해제 · 쪽 전부)이 서로 다른 선택자를 쓰면 하나를 고칠 때 나머지가 조용히
+    // 어긋난다.
+    function allPicks() {
+      return Array.prototype.slice.call(
+        document.querySelectorAll(".catcard .pick"));
+    }
+
+    // **고른 것이 새로고침을 넘어 산다** (DiaRUGA 187). `base.html` 은 뒤로 와서
+    // 되살아난 화면(bfcache)을 늘 다시 받는다 — 교정·검토 표시가 옛것이면 안
+    // 되기 때문이다. 그런데 **그 새로고침이 고른 칸까지 비웠다**: 카드를 눌러
+    // 그 시야를 보고 돌아오는 것이 이 화면의 일상이라, 120개를 골라 놓고 하나를
+    // 확인하러 갔다 오면 처음부터 다시 누른다(사용자 2026-09-07).
+    //
+    // **주소가 같을 때만 되살린다.** 거르개·쪽이 달라지면 그 쪽에 없는 카드를
+    // 고른 채로 두는 셈이다 — 「화면에 없는 것을 고를 수는 없다」(DiaRUGA P16 5.2)가
+    // 그 자리에서도 성립해야 한다.
+    //
+    // **탭 안에서만 산다** — `sessionStorage` 다. 고른 것은 지금 하고 있는
+    // 일이지 다음에 열 때까지 들고 갈 값이 아니고, 어제 고른 것이 되살아나면
+    // 사람이 안 본 카드에 종명이 앉는다.
+    var PICKMEM = "forgia.catalog.pick";
+
+    function pickAt() { return location.pathname + location.search; }
+
+    function pickId(p) {
+      var c = p.closest(".catcard");
+      return c.dataset.gid + "/" + c.dataset.image + "/" + c.dataset.key;
+    }
+
+    // 저장·되살림 둘 다 **막혀도 그냥 넘어간다** — 비공개 창에서는 접근 자체가
+    // 예외다. 고르는 일은 계속 되어야 하고, 못 지킨 것은 다음 새로고침에
+    // 비어 있는 것으로 드러난다.
+    function savePicks() {
+      try {
+        sessionStorage.setItem(PICKMEM, JSON.stringify({
+          at: pickAt(),
+          ids: allPicks().filter(function (p) { return p.checked; }).map(pickId),
+        }));
+      } catch (e) { /* 접근이 막혔다 */ }
+    }
+
+    function restorePicks() {
+      var got = null;
+      try { got = JSON.parse(sessionStorage.getItem(PICKMEM) || "null"); }
+      catch (e) { return; }
+      if (!got || got.at !== pickAt() || !got.ids || !got.ids.length) { return; }
+      var want = {};
+      got.ids.forEach(function (id) { want[id] = true; });
+      allPicks().forEach(function (p) {
+        if (want[pickId(p)]) { p.checked = true; }
+      });
+    }
+
+    // **단추 하나가 두 방향으로 돈다** (DiaRUGA 185). 다 골라져 있으면 푸는 쪽이 된다 —
+    // 「전부 고르기」와 「해제」를 나란히 두면 지금 할 일이 어느 쪽인지를 사람이
+    // 매번 읽어야 하고, 그 줄에는 이미 거르개 칩이 여덟 개 서 있다.
+    var pickall = document.querySelector(".pickall");
+    var pickallText = pickall && pickall.querySelector(".t");
+
+    function pickallRefresh() {
+      if (!pickall) { return; }
+      var boxes = allPicks();
+      var all = boxes.length > 0 && boxes.every(function (p) { return p.checked; });
+      pickall.setAttribute("aria-pressed", all ? "true" : "false");
+      pickallText.textContent = all ? "이 쪽 고르기 해제" : "이 쪽 전부 고르기";
+    }
+
+    function refresh() {
+      var n = picked().length;
+      bar.hidden = n === 0;
+      bn.textContent = "고른 것 " + n + "개";
+      // **고르는 중인지가 화면 전체의 상태다** (DiaRUGA 188). 카드마다가 아니라
+      // `body` 에 둔다 — CSS 가 카드 안쪽을 한 규칙으로 뚫고, 아래 클릭
+      // 가로채기도 같은 값을 본다.
+      document.body.classList.toggle("picking", n > 0);
+      cards.forEach(function (c) {
+        c.card.classList.toggle("picked", c.picked());
+        c.pickLock(n > 0);
+      });
+      pickallRefresh();
+      savePicks();
+    }
+
+    // **누른 자리를 고르기로 받는다** (188 · 사용자 2026-09-07).
+    //
+    // **잡는 단계가 내려가는 쪽(capture)이다.** 카드 안에는 이미 도판 미리보기·
+    // 지우기·묶음 풀기가 각자 클릭을 듣고 있어, 올라오는 쪽에서 잡으면 그들이
+    // 먼저 돈다 — 고르는 중에 「지운다」가 눌리면 되돌릴 것이 늘어난다.
+    //
+    // **키보드로 오는 클릭도 여기서 막힌다.** 링크·단추에 포커스를 두고 Enter 를
+    // 치면 그 요소가 그대로 대상이라 `pointer-events` 가 못 막는다 — 마우스는
+    // CSS, 키보드는 여기다.
+    document.addEventListener("click", function (e) {
+      if (!document.body.classList.contains("picking")) { return; }
+      if (!e.target.closest) { return; }
+      var card = e.target.closest(".catcard");
+      if (!card) { return; }
+      // 고르는 칸 자체는 브라우저에 맡긴다 — 여기서 또 뒤집으면 두 번 뒤집혀
+      // **누르는데 아무 일도 안 일어난다.**
+      if (e.target.closest(".pick")) { return; }
+      e.preventDefault();
+      e.stopPropagation();
+      var p = card.querySelector(".pick");
+      if (!p) { return; }
+      p.checked = !p.checked;
+      refresh();
+    }, true);
+
+    if (pickall) {
+      pickall.addEventListener("click", function () {
+        var boxes = allPicks();
+        // 하나라도 안 골라져 있으면 채우는 쪽이다 — 반쯤 고른 상태에서 눌렀을
+        // 때 고른 것이 사라지면 사람이 방금 한 일을 잃는다.
+        var on = boxes.some(function (p) { return !p.checked; });
+        boxes.forEach(function (p) { p.checked = on; });
+        bsay.textContent = "";
+        refresh();
+      });
+    }
+
+    allPicks().forEach(function (p) {
+      p.addEventListener("change", refresh);
+    });
+
+    bar.querySelector(".clear").addEventListener("click", function () {
+      allPicks().forEach(function (p) { p.checked = false; });
+      bsay.textContent = "";
+      refresh();
+    });
+
+    go.addEventListener("click", function () {
+      var chosen = picked();
+      if (!chosen.length) { return; }
+
+      // **빈 칸은 안 고친다.** 서버도 없는 칸을 "안 고친다" 로 받는다 — 카드
+      // 하나짜리 저장과 같은 규칙이라, 여기서만 빈 것을 "비운다" 로 읽으면
+      // 사람이 한 칸만 채우고 누를 때 나머지 셋이 지워진다.
+      var f = {};
+      Object.keys(bfields).forEach(function (k) {
+        if (bfields[k].value) { f[k] = bfields[k].value; }
+      });
+      if (!Object.keys(f).length) {
+        bsay.textContent = "고칠 칸을 하나는 채우세요";
+        bsay.className = "say warn";
+        return;
+      }
+
+      // **파편으로 바꾸는 것은 미리 묻는다** (DiaRUGA P16 5.2). 안 물으면 등급·자세가
+      // 매겨진 카드마다 409 가 돌아오고, 화면에는 "저장 실패" 만 줄줄이 뜬다.
+      if (isFrag(f.cls)) {
+        var hit = chosen.filter(function (c) {
+          return c.fields.grade.value || c.fields.pose.value;
+        });
+        if (hit.length) {
+          if (!window.confirm("파편에는 등급·자세를 매기지 않습니다.\n"
+                              + "고른 것 중 " + hit.length + "개에 매긴 등급·자세를 "
+                              + "지우고 파편으로 바꿀까요?")) { return; }
+          f.grade = "";
+          f.pose = "";
+        }
+      }
+
+      go.disabled = true;
+      bsay.textContent = "저장하는 중…";
+      bsay.className = "say";
+      chosen.forEach(function (c) {
+        c.card.classList.add("dirty");
+        c.say.textContent = "";
+      });
+
+      post({act: "bulk", fields: f,
+            items: chosen.map(function (c) { return c.id(); })}, false)
+        .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (p) {
+          go.disabled = false;
+          if (!(p[0] && p[1].ok)) {
+            chosen.forEach(function (c) { c.card.classList.remove("dirty"); });
+            bsay.textContent = "저장 실패 — " + (p[1].error || "다시 시도하세요");
+            bsay.className = "say warn";
+            return;
+          }
+          // **결과를 카드마다 앉힌다.** "N장 중 M장 저장됨" 한 줄로 끝내면
+          // 사람이 실패한 카드를 못 짚는다 (063 — 못 한 것은 오류로 말한다).
+          var byKey = {};
+          (p[1].results || []).forEach(function (x) {
+            byKey[x.gid + "/" + x.image + "/" + x.key] = x;
+          });
+          chosen.forEach(function (c) {
+            var id = c.id();
+            var got = byKey[id.gid + "/" + id.image + "/" + id.key];
+            c.card.classList.remove("dirty");
+            if (!got) { return; }
+            if (got.ok) { c.accept(got); return; }
+            c.say.textContent = "저장 실패 — " + (got.error || "");
+            c.say.className = "say warn";
+          });
+          var bad = p[1].n - p[1].n_ok;
+          bsay.textContent = bad
+            ? p[1].n_ok + "개 저장 · " + bad + "개는 못 했습니다 (카드에 적었습니다)"
+            : p[1].n_ok + "개 저장했습니다";
+          bsay.className = bad ? "say warn" : "say";
+        })
+        .catch(function () {
+          go.disabled = false;
+          chosen.forEach(function (c) { c.card.classList.remove("dirty"); });
+          bsay.textContent = "닿지 못했습니다 — 연결을 확인하세요";
+          bsay.className = "say warn";
+        });
+    });
+
+    // **되살린 다음에 세운다** — `refresh()` 가 띠와 「쪽 전부 고르기」를
+    // 지금 고른 것에 맞춘다. 순서가 바뀌면 칸만 켜지고 띠가 안 뜬다.
+    restorePicks();
+    refresh();
+  }
+})();
+</script>
+{% endblock %}

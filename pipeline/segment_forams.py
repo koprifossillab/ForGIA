@@ -8,8 +8,8 @@
     python segment_forams.py --slide <slug> --weights models/11n-synth-v2-1024.pt --batch yolo-seed
     python segment_forams.py "/data3/ForGIA/stacked/g000_Snap-00001-00003_focused.jpg" --no-db
 
-**교정 재바인딩(`rebind.py`)은 3단계에서 온다.** 그때까지 `_promote_and_rebind` 는
-`is_current` 만 옮기고 교정은 안 맺는다 — 아직 교정 표가 없다.
+교정 재바인딩은 `rebind.py`(같은 디렉토리)가 한다 — 새 검출을 현재로 올릴 때
+`(이미지, 묶음)` 의 교정을 새 후보에 IoU 로 다시 맺는다 (3단계).
 
 DiaRUGA 에서 물려받은 규칙:
 
@@ -71,12 +71,7 @@ from django.utils import timezone                                   # noqa: E402
 
 import batch_scope                                                  # noqa: E402
 import runlog                                                       # noqa: E402
-# 교정 재바인딩은 3단계(`migrate/rebind.py`)에서 온다. 그때까지는 없다 —
-# `mask_key` 규칙만 여기 한 벌 둔다(그쪽과 같아야 한다: bbox 네 수를 `_` 로)
-try:
-    import rebind                                                   # noqa: E402
-except ImportError:
-    rebind = None
+import rebind                                                       # noqa: E402
 import judge                                                        # noqa: E402
 from viewer.images import ensure_image
 from viewer.models import (Candidate, Detection, Frame, Run,        # noqa: E402
@@ -796,10 +791,6 @@ def _promote_and_rebind(vp, det, iou_min):
         det.save(update_fields=["is_current"])
 
         det.refresh_from_db()
-        # 교정 재바인딩은 3단계(`migrate/rebind.py` · 교정 표)에서 온다. 그때까지
-        # 옮길 교정이 없으므로 통계는 빈 Counter 다 — 부르는 쪽은 그대로 돈다
-        if rebind is None:
-            return Counter()
         return rebind.rebind_viewpoint(vp, det, iou_min=iou_min)
 
 

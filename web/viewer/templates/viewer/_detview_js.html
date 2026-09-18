@@ -1,0 +1,4156 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_detview_js.html`(4,117줄)에서 왔다 — 종명 자동완성만 더했다.
+{% endcomment %}
+{% comment %}
+  검토 화면의 배선 — **한 벌뿐이다** (DiaRUGA P25 1단계).
+
+  예전에는 이 스크립트가 `_detection.html` 안에 있었다. 조각이 화면에 하나만
+  놓이던 동안은 그래도 됐는데, **오프라인 검토기는 시야마다 조각을 하나씩
+  놓는다** — 4천 줄을 그 수만큼 렌더할 수는 없다. 배선은 여기 한 번,
+  `initDetView(uid)` 를 조각마다 한 번 부른다.
+
+  **함수로 뺐을 뿐 안은 그대로다.** `uid` 만 바깥에서 받고, 서버에 닿는
+  자리는 아래 `env` 다섯으로 모았다 — 오프라인은 그것을 갈아 끼운다.
+{% endcomment %}
+<script>
+/* **서버에 닿는 자리는 여기가 전부다** (DiaRUGA P25 1.1 · 실측으로 다섯).
+
+   온라인은 그대로 `fetch` 와 `/crop` 이고, 오프라인 파일은 이 객체를 **먼저**
+   갈아 끼워 저장을 기록으로 받고 크롭을 캔버스로 자른다. 화면 코드는 어느
+   쪽인지 모른다 — 알면 갈래가 화면 안으로 번지고, 그 갈래마다 "되는 것처럼
+   보이는" 자리가 생긴다(DiaRUGA 051).
+
+   `send` 는 **`fetch` 와 같은 약속을 돌려준다**(`ok`·`status`·`json()`).
+   그래야 실패를 다루는 자리를 오프라인용으로 또 적지 않는다. */
+window.DiaRUGA = window.DiaRUGA || {};
+if (!window.DiaRUGA.env) {
+  window.DiaRUGA.env = {
+    offline: false,
+    /* kind 는 어느 문인가 — 'review' | 'catalog' | 'spread' | 'link'.
+       주소로 갈래를 내면 서브경로(`/DiaRUGA/`)에서 어긋난다. */
+    send: function (kind, url, opts) { return fetch(url, opts); },
+    /* 크롭 한 장. **주소가 아니라 요소를 돌려준다** — 오프라인은 자를 서버가
+       없어 이미 화면에 들고 있는 사진에서 그 자리만 내보인다(배경 위치로
+       민다). 주소만 주고받는 자리로 두면 그쪽이 `<img>` 를 못 만든다. */
+    cropImg: function (uid, rel, box, w) {
+      var im = document.createElement('img');
+      im.src = window.ROOT + '/crop?p=' + encodeURIComponent(rel) +
+        '&b=' + box.join(',') + '&pad=0&w=' + w;
+      return im;
+    }
+  };
+}
+
+window.initDetView = function (uid) {
+  var env = window.DiaRUGA.env;
+  var view = document.getElementById('dv-' + uid);
+  var canvas = document.getElementById('canvas-' + uid);
+  var band = document.getElementById('band-' + uid);
+  var info = document.getElementById('selinfo-' + uid);
+  var zoomTag = document.getElementById('zoom-' + uid);
+  var saveState = document.getElementById('savestate-' + uid);
+  if (!view || !canvas) return;
+
+  var cands = JSON.parse(document.getElementById('cand-' + uid).textContent || '[]');
+  var rejects = JSON.parse(document.getElementById('rej-' + uid).textContent || '[]');
+  var W = parseFloat(view.dataset.w), H = parseFloat(view.dataset.h);
+  var stem = view.dataset.stem;
+  // 저장이 어느 시야로 갈지는 이 둘이 정한다 (stem 은 서버가 검증에만 쓴다)
+  var vpSlug = view.dataset.slug || '';
+  var vpGid = view.dataset.gid || '';
+  // 개체 카드로 가는 길 (DiaRUGA 149). **주소는 서버가 만든다** — 절대경로를 박지
+  // 않는다(서브경로 `/DiaRUGA/` 아래에서 돈다).
+  var CATALOG_URL = view.dataset.catalogUrl || '';
+  // 카탈로그 칸의 저장 문 (DiaRUGA 183). **개체 하나만 고치는 좁은 문이다** — `/review`
+  // 와 달리 범위를 갈아치우지 않는다(`views.save_catalog` 머리말).
+  var CAT_SAVE_URL = view.dataset.catSaveUrl || '';
+  // **어느 이미지로 갈지** (DiaRUGA P09 1단계). 캐러셀이 판을 바꾸면 swapDet 이 바꾼다.
+  // 비어 있으면 payload 에 안 실어 서버가 대표 이미지로 받는다 — 옛 화면과
+  // 같은 동작이라 배포 중에 열려 있던 탭이 안 깨진다.
+  var curImage = view.dataset.image || '';
+  // **사슬을 그릴 때 볼 판.** 보통은 `curImage` 와 같지만, 캐러셀을 스치는
+  // 미리보기에서는 다르다 — 그때 `curImage`(저장 대상)를 바꾸면 안 되기
+  // 때문이다(`swapDet` 의 "교정 상태와 저장 대상은 고른 판의 것으로 남는다").
+  // 이것을 안 두었더니 **미리보기에서 마스크는 스친 판의 것인데 사슬은 고른
+  // 판의 것으로 찾아** 아무것도 안 붙었다 (사용자 보고 2026-08-11).
+  var linkImage = '';
+  if (!W || !H) return;
+
+  var imgEl = document.getElementById('img-' + uid);
+  // 지금 확정된(클릭으로 고른) 이미지. 미리보기 중에도 이 값은 바뀌지 않는다.
+  var committedSrc = imgEl.getAttribute('src');
+
+  // --- 밝기·대비 -------------------------------------------------------------
+  //
+  // **`<img>` 에만 건다.** 마스크는 형제 `<svg>` 라 안 물든다 — 마스크 색이
+  // 분류를 나타내는 판정 근거여서, 사진을 어둡게 했다고 함께 어두워지면
+  // 무엇으로 지정했는지가 안 읽힌다. `canvas` 에 걸면 둘 다 물든다.
+  //
+  // **자료가 아니라 보는 방식이라 DB 로 안 간다.** 원본 화소는 그대로이고
+  // 계측·판정은 서버가 원본으로 한다. 브라우저에만 남겨 시야를 옮겨도 따라오게
+  // 한다 — 슬라이드 하나를 훑는 동안 한 번만 맞추면 된다.
+  (function () {
+    var bri = document.getElementById('bri-' + uid),
+        con = document.getElementById('con-' + uid),
+        briv = document.getElementById('brival-' + uid),
+        conv = document.getElementById('conval-' + uid),
+        rst = document.getElementById('adjreset-' + uid),
+        box = document.getElementById('adjbox-' + uid),
+        now = document.getElementById('adjnow-' + uid);
+    if (!bri || !con) return;
+    var KEY = 'forgia.imgadjust';
+
+    function read() {
+      try {
+        var v = JSON.parse(localStorage.getItem(KEY) || '{}');
+        return [+v.b || 100, +v.c || 100];
+      } catch (e) { return [100, 100]; }
+    }
+    function apply(save) {
+      var b = +bri.value, c = +con.value;
+      imgEl.style.filter = (b === 100 && c === 100)
+        ? '' : 'brightness(' + b + '%) contrast(' + c + '%)';
+      briv.textContent = b + '%';
+      conv.textContent = c + '%';
+      // 100·100 이면 표식을 지운다 — 켜져 있는지 한눈에 보여야 한다
+      rst.classList.toggle('on', b !== 100 || c !== 100);
+      // **접혀 있을 때 켜진 것을 말하는 자리가 여기뿐이다** (DiaRUGA 194). 폰에서는
+      // 이 판이 접힌 채로 시작하므로, 값을 요약에 적지 않으면 사진이 왜
+      // 어두운지 화면 어디에도 안 적힌다.
+      if (now) {
+        now.textContent = (b === 100 && c === 100) ? '' : (b + '% · ' + c + '%');
+      }
+      if (save) {
+        try { localStorage.setItem(KEY, JSON.stringify({ b: b, c: c })); }
+        catch (e) { /* 사생활 모드 등 — 조정은 그대로 되고 기억만 안 된다 */ }
+      }
+    }
+    var was = read();
+    bri.value = was[0];
+    con.value = was[1];
+    apply(false);
+    // **폰에서는 접고 시작한다** (194 · 사용자). 기기가 무엇인지는 브라우저가
+    // 안다 — 우리가 짐작하면 태블릿에 마우스를 붙인 자리에서 틀린다(DiaRUGA 192).
+    // 좁은 화면 규칙과 **같은 폭**을 본다(`base.html` 의 820px).
+    if (box && window.matchMedia &&
+        window.matchMedia('(max-width: 820px)').matches) {
+      box.open = false;
+    }
+    bri.addEventListener('input', function () { apply(true); });
+    con.addEventListener('input', function () { apply(true); });
+    rst.addEventListener('click', function () {
+      bri.value = con.value = 100;
+      apply(true);
+    });
+  })();
+  // **서버가 키를 실어 보냈으면 그것이 먼저다** (DiaRUGA P09 2단계). 지금까지는 키가 곧
+  // bbox 문자열이라 기하에서 다시 만들어도 같았는데, **후보 없이 교정만 남은
+  // 개체**는 그 등식이 깨질 수 있다 — 사람이 경계를 고치면(4단계) bbox 는
+  // 바뀌고 키는 그대로여야 한다. 기하에서 만들면 그 순간 **다른 개체가 되어**
+  // 저장이 옛 행을 지우고 새 행을 만든다.
+  //
+  // 서버의 `data.cand_key()` 와 같은 규칙이다. 갈라지면 화면이 보내는 키와
+  // 서버가 아는 키가 어긋나고, `/review` 는 모르는 키를 지운다.
+  function keyOf(c) {
+    if (c.key) return c.key;
+    var b = c.bbox_xywh;
+    return b.map(function (v) { return Math.round(v); }).join('_');
+  }
+
+  // **사람이 그린 개체인가** (DiaRUGA P09 3단계). 분류가 가는 길이 다르다 —
+  // `labels` 지도는 엔진 개체의 것이고, 그린 개체는 `drawn` 이 통째로
+  // 나른다. 지도에 실으면 그 키가 되돌아오는데 `batch=NULL` 이라 서버의 엔진
+  // 쪽 `known` 에 없다 → **한 번 그리면 그 시야를 더 저장할 수 없게 된다.**
+  function isManual(c) { return !!(c && c.source === 'manual'); }
+
+  // 서버에 저장된 교정 상태를 그대로 이어받는다.
+  var goneList = JSON.parse(document.getElementById('gone-' + uid).textContent || '[]');
+  var removed = new Set(goneList.map(keyOf));   // 오검출로 지운 것
+  // 복구 목록은 서버가 준 것을 그대로 쓴다. manual 플래그로 되짚으면 지워 둔
+  // 탈락분까지 복구된 것으로 세어, 다음 저장에서 지운 것이 되살아난다.
+  var accepted = new Set(JSON.parse(document.getElementById('acc-' + uid).textContent || '[]'));
+  // 사람이 지정한 분류. 자동 판정을 덮어쓴다.
+  //
+  // **개체 코멘트 지도는 없다** (0036). 분류만 이 지도로 가고, 개체를 두고 하는
+  // 말(`c.note`)은 오른쪽 칸의 카탈로그가 `/catalog/save` 로 적는다 — 이 화면의
+  // payload 는 코멘트를 안 나른다(서버도 `notes` 를 흘린다).
+  var labels = JSON.parse(document.getElementById('lab-' + uid).textContent || '{}');
+  // 검토 완료 표시 — 서버가 렌더해 둔 버튼 상태에서 그대로 이어받는다.
+  var doneBtn = document.getElementById('done-' + uid);
+  var reviewDone = !!(doneBtn && doneBtn.classList.contains('on'));
+  // 지운 것도 목록에 합쳐 둔다 — 흔적으로 그려 되살릴 수 있어야 한다.
+  cands = cands.concat(goneList);
+  var sel = new Set();
+  var els = [];
+
+  // --- 링크가 짚어 온 개체 (DiaRUGA 118) --------------------------------------------
+  //
+  // 카탈로그·크롭·계측 표에서 사진을 눌러 온 길이다. 서버가 `{key, image}` 로
+  // 내려 준다 (`views._highlight_arg`).
+  //
+  // **키만 들고 다닌다 — 번호가 아니다.** `cands` 의 자리는 판을 바꾸거나
+  // 개체를 그리면 달라지는데, 키는 교정이 붙는 그 열쇠라 판이 바뀌어도 같은
+  // 개체를 짚는다. `build()` 가 그릴 때마다 키로 다시 맞춘다 — 번호를 기억해
+  // 두면 지운 개체 하나에 표시가 옮겨 앉는다.
+  var hlKey = '', hlImage = '';
+  (function () {
+    var el = document.getElementById('hl-' + uid);
+    if (!el) return;
+    try {
+      var v = JSON.parse(el.textContent || 'null') || {};
+      hlKey = v.key ? String(v.key) : '';
+      hlImage = v.image ? String(v.image) : '';
+    } catch (e) { hlKey = hlImage = ''; }
+  })();
+
+  // --- 툴팁 (문서 전체에 하나만) -------------------------------------------
+  var tip = document.querySelector('.dettip');
+  if (!tip) { tip = document.createElement('div'); tip.className = 'dettip'; document.body.appendChild(tip); }
+
+  function num(v, d) { return (v === undefined || v === null) ? '—' : (d ? (+v).toFixed(d) : v); }
+  // 분류 정의는 서버(data.CLASS_LABELS)에서 온다 — 양쪽에 적어 두면 어긋난다.
+  var CLASS_DEFS = JSON.parse(document.getElementById('cls-' + uid).textContent || '[]');
+  // 이름이 둘이다. **자리가 좁은 곳은 약칭**(개체 줄·코멘트 목록 — 한 줄에
+  // 번호·분류·장축이 함께 들어간다), **말풍선은 전체 이름**이다. 말풍선은
+  // 자리가 넉넉하고, 거기서까지 줄이면 무엇을 보는지가 흐려진다.
+  var CLS_KO = {}, CLS_FULL = {};
+  CLASS_DEFS.forEach(function (d) {
+    CLS_KO[d.key] = d.short || d.label;
+    CLS_FULL[d.key] = d.label;
+  });
+  function clsName(c) { return CLS_KO[c.cls] || '미분류'; }
+  // 이 마스크가 든 묶음의 한 줄 요약 (DiaRUGA P11 3단계). linkOf 는 아래에서 생긴다 —
+  // 함수 선언이라 끌어올려지고, 말풍선은 hover 때에나 불린다.
+  function linkTipLine(c) {
+    var lk = (typeof linkOf === 'function') && linkOf(curImage, keyOf(c));
+    if (!lk) return '';
+    var rep = lk.members.find(function (m) { return m.rep; });
+    var repName = '';
+    if (rep && shotDets) {
+      Object.keys(shotDets).forEach(function (k) {
+        if (Number(shotDets[k].image) === rep.image)
+          repName = (k === STACK_KEY) ? '합성본' : k;
+      });
+    }
+    return '<div class="dim">⛓ ' + lk.members.length + '장 묶음' +
+      (repName ? ' · 대표: ' + repName.replace('Snap-', '') : '') + '</div>';
+  }
+
+  // **글자를 그대로 심지 않는다.** 종명·코멘트는 사람이 치는 자유 입력이라
+  // `<` 하나가 말풍선을 통째로 망가뜨린다 — 예외도 안 나고 그냥 안 보인다.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function tipHtml(c) {
+    // **동정한 종명이 맨 위다** (사용자 방침 2026-08-10). 개체 카탈로그에서 적은
+    // 것이고, 커서를 올렸을 때 가장 먼저 읽혀야 하는 것이 그것이다 — 형태
+    // (원형·봉상)는 그 다음이다. 학명이라 이탤릭 굵게 쓴다(`.dettip .sp`).
+    return (c.species ? '<span class="sp">' + esc(c.species) + '</span>' : '') +
+      '<b>#' + c.id + ' · ' + (CLS_FULL[c.cls] || '미분류') +
+      (c.cls_user ? ' · 사람 지정' : '') + (c.manual ? ' · 수동복구' : '') + '</b>' +
+      linkTipLine(c) +
+      (c.cls_user && c.cls_auto ? '<div class="dim">자동 판정: ' +
+        (CLS_FULL[c.cls_auto] || '미분류') + '</div>' : '') +
+      (c.note ? '<div style="margin:3px 0;white-space:pre-wrap">📝 ' + esc(c.note) + '</div>' : '') +
+      (c.reject ? '<div class="dim">탈락사유: ' + c.reject + '</div>' : '') +
+      // **왜 지표가 비었는지 적는다** (DiaRUGA P09 2단계). 이 개체는 `Candidate` 가 없어
+      // 잰 적이 없다 — 빈칸만 보이면 고장으로 읽힌다. 아래 표를 감추지는
+      // 않는다: 칸이 사라지면 "이 개체는 다르게 생겼다" 가 아니라 "화면이
+      // 덜 그려졌다" 로 보인다.
+      (c.orphan ? '<div class="dim">' +
+        (c.source === 'manual' ? '사람이 그린 개체'
+                               : '이번 검출에 대응 개체가 없다') +
+        ' — 지표를 잰 적이 없어 아래가 비어 있다</div>' : '') +
+      '<table>' +
+      '<tr><td>장축 / 단축</td><td>' + num(c.major_um, 1) + ' / ' + num(c.minor_um, 1) + ' µm</td></tr>' +
+      '<tr><td>면적</td><td>' + num(c.area_um2, 1) + ' µm²</td></tr>' +
+      '<tr><td>신장비</td><td>' + num(c.elongation, 2) + '</td></tr>' +
+      '<tr><td>타원 IoU</td><td>' + num(c.ellipse_iou, 3) + '</td></tr>' +
+      '<tr><td>볼록성</td><td>' + num(c.solidity, 3) + '</td></tr>' +
+      '<tr><td>매끈함</td><td>' + num(c.convexity, 3) + '</td></tr>' +
+      // ForGIA: 텍스처 대신 확신도 — 판정 관문이 그것이다 (`judge.conf_min`)
+      '<tr><td>확신도</td><td>' + num(c.predicted_iou, 2) + '</td></tr>' +
+      '</table>';
+  }
+  function placeTip(e) {
+    var pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    var x = e.clientX + pad, y = e.clientY + pad;
+    if (x + w > window.innerWidth - 6) x = e.clientX - w - pad;
+    if (y + h > window.innerHeight - 6) y = e.clientY - h - pad;
+    tip.style.left = Math.max(4, x) + 'px';
+    tip.style.top = Math.max(4, y) + 'px';
+  }
+
+  // --- 스케일바 ------------------------------------------------------------
+  // 확대해도 "화면에서 이만큼이 몇 µm 인가" 는 계속 달라지므로 매번 다시 잰다.
+  var umPerImgPx = JSON.parse(document.getElementById('umpp-' + uid).textContent || '0');
+  var sb = document.getElementById('sb-' + uid);
+  var sbBar = sb.querySelector('i'), sbLabel = sb.querySelector('span');
+
+  function niceLength(v) {
+    // 1·2·5 계열로 떨어뜨린다 — 눈금이 읽기 좋은 값이어야 한다.
+    var e = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+    var m = v / e;
+    return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * e;
+  }
+  function fmtUm(v) {
+    return (v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : String(Math.round(v))) + ' µm';
+  }
+  function updateScaleBar() {
+    // 배율을 모르면 눈금을 그리지 않는다 — 틀린 스케일바는 없느니만 못하다.
+    if (!umPerImgPx) { sb.style.display = 'none'; return; }
+    // 레이아웃 전이면 폭이 0 이라 잴 수 없다. 이미지 load 때 다시 부른다.
+    var vw0 = canvasBox().w;
+    if (!vw0) return;
+    // 화면에 그려진 이미지의 폭(CSS px). canvas 가 그 폭을 꽉 채우고 k 배 확대된다.
+    var shownW = vw0 * k;
+    var umPerScreenPx = umPerImgPx * W / shownW;
+    var target = Math.max(70, Math.min(170, vw0 * 0.16));
+    var nice = niceLength(umPerScreenPx * target);
+    sbBar.style.width = Math.round(nice / umPerScreenPx) + 'px';
+    sbLabel.textContent = fmtUm(nice);
+  }
+
+  // --- 확대 / 이동 ---------------------------------------------------------
+  var k = 1, tx = 0, ty = 0;
+  // 배율은 **원본 화소 기준**으로 표시한다. 화면에 맞춘 상태(k=1)를 100% 라고
+  // 하면 "지금 원본을 다 보고 있는가" 를 알 수 없다 — 원본 2752 px 을 1460 px
+  // 폭에 맞춰 놓은 것이라 실제로는 53% 다. 100% = 원본 1화소가 화면 1화소.
+  function zoomPct() {
+    var vw0 = canvasBox().w;
+    if (!vw0 || !W) return null;
+    return 100 * vw0 * k / W;
+  }
+
+  function applyTransform() {
+    canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + k + ')';
+    // 선 두께·유령 표시가 확대에 딸려 두꺼워지지 않게 역수를 넘긴다.
+    // CSS 가 calc(2px * var(--inv)) 로 곱하므로 요소마다 손댈 필요가 없다.
+    canvas.style.setProperty('--inv', String(1 / k));
+    var pct = zoomPct();
+    if (pct !== null) {
+      // 원본 화소를 보고 있는지도 같이 알려 준다 — 축소본을 늘린 화면으로
+      // areolae 를 판단하면 안 되기 때문이다.
+      zoomTag.textContent = (pct < 10 ? pct.toFixed(1) : String(Math.round(pct))) +
+        '%' + (hires ? ' · 원본' : '');
+    }
+    updateScaleBar();
+  }
+  function clampPan() {
+    // 이미지가 화면 밖으로 완전히 빠져나가지 않게 한다.
+    // **재는 것은 사진의 상자다**(`toImage` 와 같은 이유 · 192).
+    var vb = canvasBox();
+    var vw = vb.w, vh = vb.h;
+    var min = Math.min(vw, vh) * 0.2;
+    tx = Math.min(vw - min, Math.max(min - vw * k, tx));
+    ty = Math.min(vh - min, Math.max(min - vh * k, ty));
+  }
+  view.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var r = view.getBoundingClientRect();
+    var px = e.clientX - r.left, py = e.clientY - r.top;
+    var nk = Math.min(12, Math.max(1, k * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
+    if (nk === k) return;
+    // 커서 아래 지점이 그대로 있도록 평행이동을 보정한다.
+    tx = px - (px - tx) * nk / k;
+    ty = py - (py - ty) * nk / k;
+    k = nk;
+    if (k === 1) { tx = 0; ty = 0; } else { clampPan(); }
+    applyTransform();
+    maybeHiRes();
+  }, { passive: false });
+
+  // --- 손가락 (192 · 모바일) -------------------------------------------------
+  //
+  // 데스크탑의 조작은 **마우스에만 있는 것**을 쓴다 — 휠 확대, 우클릭 드래그
+  // 이동, 우클릭 메뉴, hover 말풍선. 손가락에는 그중 아무것도 없다.
+  //
+  // **한 손가락은 이동, 두 손가락은 확대.** 사진을 보는 화면에서 한 손가락
+  // 끌기는 이동이 자연스럽고, 범위 선택은 그 자리를 내준다 — 손가락에는
+  // Shift 가 없어 어차피 하나씩 눌러 고른다.
+  //
+  // **탭은 가로채지 않는다.** 브라우저가 탭을 마우스 이벤트로 바꿔 주므로
+  // 선택·되살리기·펼침이 그대로 돈다 — `preventDefault` 를 부르는 것은
+  // **이동·확대로 판정한 다음**뿐이다. 여기서 손대면 그 갈래를 전부 다시
+  // 적어야 하고, 두 벌이 되면 조용히 어긋난다.
+  var touch = null, byTouch = false;
+
+  function tgap(t) {
+    var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy) || 1;
+  }
+
+  view.addEventListener('touchstart', function (e) {
+    byTouch = true;
+    // 그리기·고치기는 탭으로 점을 찍는 일이라 손대지 않는다
+    if (drawing || editing) { touch = null; return; }
+    if (e.touches.length >= 2) {
+      var t = [e.touches[0], e.touches[1]];
+      var r = view.getBoundingClientRect();
+      touch = { mode: 'pinch', gap: tgap(t), k0: k, tx0: tx, ty0: ty,
+                cx: (t[0].clientX + t[1].clientX) / 2 - r.left,
+                cy: (t[0].clientY + t[1].clientY) / 2 - r.top };
+      e.preventDefault();
+    } else {
+      touch = { mode: 'maybe', sx: e.touches[0].clientX,
+                sy: e.touches[0].clientY, tx0: tx, ty0: ty };
+    }
+  }, { passive: false });
+
+  view.addEventListener('touchmove', function (e) {
+    if (!touch) return;
+    if (touch.mode === 'pinch') {
+      if (e.touches.length < 2) return;
+      var t = [e.touches[0], e.touches[1]];
+      // 휠 확대와 **같은 규칙**이다 — 두 손가락 사이의 점이 제자리에 있게
+      // 평행이동을 보정한다. 상한도 같은 12배다(값을 여기 또 적지 않는다).
+      var nk = Math.min(12, Math.max(1, touch.k0 * (tgap(t) / touch.gap)));
+      tx = touch.cx - (touch.cx - touch.tx0) * nk / touch.k0;
+      ty = touch.cy - (touch.cy - touch.ty0) * nk / touch.k0;
+      k = nk;
+      if (k === 1) { tx = 0; ty = 0; } else { clampPan(); }
+      applyTransform();
+      maybeHiRes();
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    var f = e.touches[0];
+    var dx = f.clientX - touch.sx, dy = f.clientY - touch.sy;
+    // **8px 까지는 탭이다.** 손가락은 가만히 있어도 몇 px 흔들린다 — 그것을
+    // 이동으로 읽으면 개체를 고를 수가 없다.
+    if (touch.mode === 'maybe' && Math.abs(dx) + Math.abs(dy) > 8) {
+      touch.mode = 'pan';
+      hideTip();
+    }
+    if (touch.mode === 'pan') {
+      tx = touch.tx0 + dx; ty = touch.ty0 + dy;
+      clampPan();
+      applyTransform();
+      // 여기서부터 탭이 아니다 — 브라우저가 클릭으로 바꾸지 못하게 막는다
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  view.addEventListener('touchend', function () { touch = null; });
+  view.addEventListener('touchcancel', function () { touch = null; });
+  // **무엇으로 눌렀는지는 포인터가 말한다.** 같은 기계에 둘 다 있을 수 있어
+  // (태블릿 + 마우스) 한 번 정해 두면 안 된다 — 누를 때마다 다시 본다.
+  // `mousedown` 으로는 못 가른다: 손가락이 만드는 대체 이벤트가 그것과 같은
+  // 모양이라 그때도 "마우스" 로 읽힌다.
+  view.addEventListener('pointerdown', function (e) {
+    if (e.pointerType) byTouch = (e.pointerType !== 'mouse');
+  }, true);
+
+  window.addEventListener('resize', applyTransform);
+  // 스크립트가 도는 시점에는 아직 폭이 잡히지 않았을 수 있다. 배율 표시도
+  // 폭을 알아야 계산되므로 스케일바와 같은 시점에 다시 그린다.
+  imgEl.addEventListener('load', applyTransform);
+  setTimeout(applyTransform, 0);
+
+  // --- 레이어 토글 (bbox / mask) -------------------------------------------
+  // 끄더라도 요소는 남긴다 — 클릭 판정은 bbox 가 하므로 지우면 선택이 죽는다.
+  var layers = document.getElementById('layers-' + uid);
+  var LS_KEY = 'forgia.layers';
+
+  function applyLayers() {
+    layers.querySelectorAll('input[data-layer]').forEach(function (cb) {
+      view.classList.toggle('hide-' + cb.dataset.layer, !cb.checked);
+    });
+    // fill 은 mask 를 켰을 때만 뜻이 있다. 감추지 않고 잠근다 — 자리가 사라지면
+    // 옆 항목들이 밀려서, 체크를 껐다 켤 때 마우스가 엉뚱한 것을 누르게 된다.
+    var maskCb = layers.querySelector('input[data-layer="mask"]');
+    var fillOpt = layers.querySelector('.fillopt');
+    if (maskCb && fillOpt) {
+      var fillCb = fillOpt.querySelector('input');
+      if (fillCb) fillCb.disabled = !maskCb.checked;
+      fillOpt.classList.toggle('off', !maskCb.checked);
+    }
+  }
+  (function initLayers() {
+    var saved = {};
+    // 옛 키(`diatom.*`)도 읽는다 — 048 에서 이름을 바꿨는데, 그냥 갈아치우면
+    // 사람이 꺼 둔 레이어가 조용히 되살아난다. 쓰기는 새 키로만 한다.
+    try {
+      saved = JSON.parse(localStorage.getItem(LS_KEY) || localStorage.getItem('diatom.layers') || '{}');
+    } catch (err) { saved = {}; }
+    layers.querySelectorAll('input[data-layer]').forEach(function (cb) {
+      if (saved[cb.dataset.layer] === false) cb.checked = false;
+      cb.addEventListener('change', function () {
+        applyLayers();
+        var now = {};
+        layers.querySelectorAll('input[data-layer]').forEach(function (c) {
+          now[c.dataset.layer] = c.checked;
+        });
+        try { localStorage.setItem(LS_KEY, JSON.stringify(now)); } catch (err) { /* 사파리 사생활 모드 */ }
+      });
+    });
+    applyLayers();
+  })();
+  // 체크박스를 만지는 동안 캔버스가 확대/선택으로 반응하지 않게 한다.
+  ['wheel', 'mousedown', 'contextmenu'].forEach(function (ev) {
+    layers.addEventListener(ev, function (e) { e.stopPropagation(); });
+  });
+
+  // --- 캐러셀 (합성본 · 각 원본 프레임) -------------------------------------
+  // 깊이 맵은 안 낸다 (123 · `_shots.html`).
+  // 이미지만 갈아 끼운다. 배율·이동·선택·교정 상태는 그대로 유지된다.
+  var strip = document.getElementById('strip-' + uid);
+  var shots = strip ? Array.prototype.slice.call(strip.querySelectorAll('.shot')) : [];
+  var capTitle = document.getElementById('shot-title-' + uid);
+  var capNote = document.getElementById('shot-note-' + uid);
+  var capFull = document.getElementById('shot-full-' + uid);
+  // 탭 이름의 뒷부분(지금 띄운 판)을 판마다 다시 쓴다. 앞머리는 서버가 넣어 둔
+  // data-prefix 다 — 화면 이름을 JS 에 또 적으면 두 곳이 어긋난다.
+  var tabTitle = document.getElementById('tabtitle-' + uid);
+  var current = Math.max(0, shots.findIndex(function (s) { return s.dataset.current === '1'; }));
+  var hoverSeq = 0;
+  var loaded = {};
+
+  function preload(src, done) {
+    if (loaded[src]) { done(); return; }
+    var im = new Image();
+    im.onload = im.onerror = function () { loaded[src] = 1; done(); };
+    im.src = src;
+  }
+
+  function paint(s, full) {
+    // full 을 생략하면 지금 배율에 맞는 것을 쓴다. 미리보기(hover)는 늘 축소본이다
+    // — 커서만 지나가는데 600 KB 를 받으면 캐러셀이 무거워진다.
+    var useFull = (full === undefined) ? hires : full;
+    imgEl.src = (useFull && s.dataset.full) ? s.dataset.full : s.dataset.view;
+    imgEl.alt = s.dataset.title;
+    capTitle.textContent = s.dataset.title;
+    capNote.textContent = s.dataset.note || '';
+    capFull.href = s.dataset.full;
+    // **여기서 고친다 — swapDet 이 아니다.** 검토 화면은 판마다 검출이 따로
+    // 있지 않아 swapDet 이 첫 줄에서 빠져나간다. 거기에 두면 검토 화면에서만
+    // 이름이 안 바뀐다.
+    if (tabTitle) {
+      var pre = tabTitle.dataset.prefix || '';
+      var name = s.dataset.short || s.dataset.title || '';
+      tabTitle.textContent = pre ? (name ? pre + ' - ' + name : pre) : name;
+    }
+  }
+
+  function preview(i) {
+    var s = shots[i];
+    if (!s) return;
+    var seq = ++hoverSeq;
+    preload(s.dataset.view, function () {
+      // 그 사이 다른 데로 옮겨갔으면 버린다
+      if (seq !== hoverSeq) return;
+      paint(s, false);
+      // **사진과 개체는 함께 간다.** 프레임마다 검출이 다른 화면에서 그림만
+      // 갈면, 이 프레임 사진 위에 옆 프레임의 마스크가 얹힌 것을 보게 된다 —
+      // 그 자리에 없는 개체를 있다고 읽는다.
+      //
+      // **다만 그리기만 바꾼다** (DiaRUGA P09 1단계). 커서가 지나가는 것으로 교정
+      // 상태와 **저장 대상이 따라 움직이면 안 된다** — 판을 고르지도 않았는데
+      // 그 판으로 저장이 나가는 길이 생긴다. 고르는 것은 `commit` 뿐이다.
+      swapDet(s, false);
+    });
+  }
+  function unpreview() {
+    hoverSeq++;
+    if (shots[current]) { paint(shots[current]); swapDet(shots[current]); }
+  }
+  // 프레임마다 검출이 따로 있으면 사진과 함께 개체도 바꾼다.
+  // 자료가 없으면 undefined 라 아래 swapDet 이 곧장 빠져나간다 — 검토 화면은
+  // 지금까지와 똑같이 돈다.
+  var shotDets = null;
+  try {
+    var sdEl = document.getElementById('shotdet-' + uid);
+    if (sdEl) shotDets = JSON.parse(sdEl.textContent || 'null');
+  } catch (e) { shotDets = null; }
+
+  // --- 판마다 교정이 따로다 (DiaRUGA P09 1단계) -------------------------------------
+  //
+  // 캐러셀이 판을 바꾸면 그리는 것만 바뀌면 안 된다. **교정도 그 판의 것**이어야
+  // 하고, 저장도 그 이미지로 가야 한다 — 안 그러면 프레임을 보면서 합성본에
+  // 교정을 쌓게 된다. 화면은 아무 말도 안 한다.
+  //
+  // 안 보낸 교정을 들고 판을 옮길 수 있으므로 판마다 상태를 기억해 둔다.
+  // 서버가 준 것은 시작값이고, 사람이 만진 것이 그 위에 남는다.
+  var shotState = {};
+  var curKey = null;
+
+  function stateOf(key) {
+    if (shotState[key]) return shotState[key];
+    var d = (shotDets && shotDets[key]) || {};
+    var gone = (d.gone || []).slice();
+    shotState[key] = {
+      cands: (d.candidates || []).slice().concat(gone),
+      rejects: (d.rejected || []).slice(),
+      removed: new Set(gone.map(keyOf)),
+      accepted: new Set(d.accepted || []),
+      labels: JSON.parse(JSON.stringify(d.labels || {})),
+      image: d.image == null ? '' : String(d.image),
+      // 고친 기하도 판마다 따로다 — 안 가르면 프레임에서 고친 것이 합성본의
+      // 저장에 실려 나간다 (DiaRUGA P09 1단계와 같은 이야기)
+      edits: {},
+      summary: d.summary || ''
+    };
+    return shotState[key];
+  }
+
+  function stash() {
+    if (!curKey || !shotState[curKey]) return;
+    var st = shotState[curKey];
+    st.cands = cands; st.rejects = rejects;
+    st.removed = removed; st.accepted = accepted;
+    st.labels = labels; st.edits = edits;
+  }
+
+  // **합성본에만 검출을 낸 묶음인가** (DiaRUGA 072). SAM2 가 그렇다 — 시야마다 검출이
+  // 하나이고 그것이 합성본에 붙는다. 그때 프레임은 **같은 시야를 다른 초점면에서
+  // 본 것**이라 합성본의 마스크가 그대로 맞고, 판을 넘길 때 비우면 "이 엔진은
+  // 여기서 아무것도 못 봤다" 로 읽힌다.
+  //
+  // **판마다 제 검출을 가진 묶음(YOLO)에서는 안 한다.** 거기서는 그 프레임에
+  // 없는 것이 실제로 없는 것이고, 합성본 것을 얹으면 **그 자리에 없는 개체를
+  // 있다고 읽는다** — P09 1단계가 판마다 검출을 가른 이유가 그것이다.
+  var STACK_KEY = '__stack__';
+  function stackOnly() {
+    if (!shotDets) return false;
+    var ks = Object.keys(shotDets);
+    return ks.length === 1 && ks[0] === STACK_KEY;
+  }
+
+  // **지금 전역이 고른 판의 것인가, 지나가는 판의 것인가** (DiaRUGA 074).
+  //
+  // 미리보기는 그리기만 바꾸려고 전역(`cands`·`rejects`)을 갈아 끼운다. 그런데
+  // `stash()` 는 전역을 **`curKey` 의 것**으로 알고 담는다 — 커서가 옆 판을
+  // 스친 뒤에 판을 고르면 **옆 판의 마스크가 고른 판의 상태로 저장된다.**
+  //
+  // 실제로 그랬다: 프레임을 고른 뒤 합성본에 커서를 얹었다가 프레임을 누르면
+  // 프레임 자리에 합성본의 30개가 앉고, 이어서 합성본을 누르면 **합성본 자리에
+  // 프레임의 3개**가 나온다. 두 판의 상태가 통째로 뒤바뀐다.
+  //
+  // 그래서 **미리보기를 시작하기 전에 고른 판의 것을 먼저 갈무리하고**, 미리보기
+  // 중이라는 표시를 남긴다. 판을 고를 때는 그 표시를 보고 전역을 고른 판의
+  // 것으로 되돌린 다음에야 `stash()` 로 간다.
+  var previewing = false;
+
+  function unpreviewState() {
+    linkImage = '';                    // 미리보기가 아니면 고른 판을 본다
+    if (!previewing) return;
+    previewing = false;
+    var back = curKey && shotState[curKey];
+    if (!back) return;
+    cands = back.cands; rejects = back.rejects;
+    removed = back.removed; accepted = back.accepted;
+    labels = back.labels;
+    edits = back.edits || (back.edits = {});
+  }
+
+  // `commit` 이 false 면 **그리기만** 바꾼다 (커서가 지나가는 미리보기).
+  // 교정 상태와 저장 대상은 고른 판(`commit`)의 것으로 남는다.
+  function swapDet(s, commit) {
+    if (!shotDets || !s) return;      // 판이 하나뿐이면 여기서 끝난다 (지금까지 그대로)
+    var key = s.dataset.detkey || null;
+    if (commit === false) {
+      // **고른 판의 것을 먼저 담는다.** 사람이 방금 만진 것이 전역에만 있을 수
+      // 있고, 미리보기가 그것을 덮어쓴다 — 담아 두지 않으면 그대로 잃는다.
+      if (!previewing) { stash(); previewing = true; }
+      var pkey = (key && shotDets[key]) ? key : (stackOnly() ? STACK_KEY : null);
+      // **stateOf 로 간다 — shotDets 가 아니다** (실사용 보고 2026-08-10).
+      // shotDets 는 서버가 준 처음 상태라 이 세션에서 지운 것을 모르고,
+      // 무엇보다 `removed` 를 안 갈아 끼우면 build() 가 **고른 판의 removed**
+      // 로 지움을 판정한다 — 스친 판의 지운 마스크가 산 것처럼 그려졌다.
+      // 클릭(commit)과 같은 상태를 같은 길로 읽어야 hover 와 클릭이 같은
+      // 그림을 낸다. unpreviewState 가 여섯을 전부 되돌리므로 대칭이다.
+      var st0 = pkey ? stateOf(pkey) : null;
+      cands = st0 ? st0.cands : [];
+      rejects = st0 ? st0.rejects : [];
+      removed = st0 ? st0.removed : new Set();
+      accepted = st0 ? st0.accepted : new Set();
+      labels = st0 ? st0.labels : {};
+      edits = st0 ? (st0.edits || (st0.edits = {})) : {};
+      // 마스크와 같은 판의 사슬을 그린다 (위 `linkImage` 머리말)
+      linkImage = st0 ? st0.image : '';
+      sel.clear();
+      build();
+      return;
+    }
+    // 지나가던 것은 여기서 끝난다 — 전역을 고른 판의 것으로 되돌린다.
+    unpreviewState();
+    if (key === curKey) {
+      // 커서가 지나가며 **그리기만** 바꿔 놓았을 수 있다(`unpreview` 가 여기로
+      // 온다). 고른 판의 것으로 되돌린다 — 안 되돌리면 마우스를 캐러셀 위로
+      // 스쳤다는 이유로 **옆 판의 마스크가 남는다.**
+      var back = shotState[curKey];
+      if (back) {
+        cands = back.cands; rejects = back.rejects;
+        sel.clear(); build(); redraw();
+      }
+      return;
+    }
+    // **고른 개체의 묶음을 들고 간다** (DiaRUGA P11 3단계). 판을 넘기면 선택이
+    // 사라지는데, 묶어 둔 개체라면 다음 판에서 그 짝이 반짝여야 "지금 보는
+    // 이것이 아까 그것" 을 눈이 따라간다.
+    followLinks = [];
+    sel.forEach(function (i) {
+      var c = cands[i];
+      var lk = c && typeof linkOf === 'function' && linkOf(curImage, keyOf(c));
+      if (lk) followLinks.push(lk.id);
+    });
+
+    // **떠나기 전에 밀어낸다.** 지연 저장이 걸린 채로 판을 옮기면 그 교정이
+    // 사라진다 — 시야를 옮길 때 `flushSave` 를 부르는 것과 같은 이유다.
+    flushSave();
+    stash();
+
+    // **합성본에만 검출이 있는 묶음이면 그것을 겹쳐 본다** (DiaRUGA 072). 프레임·깊이
+    // 맵은 같은 시야라 마스크가 그대로 맞는다. 교정도 합성본에 그대로 이어진다
+    // — 저장 대상(`curImage`)이 합성본이므로 어느 판에서 눌렀든 한 자리에 쌓인다.
+    var overlay = false;
+    if ((!key || !shotDets[key]) && stackOnly()) { key = STACK_KEY; overlay = true; }
+
+    // 검출이 없는 판으로 가면 **비운다.** 그냥 두면 옛 마스크가 남아 엉뚱한
+    // 그림 위에 얹힌다. 그 판에서는 저장할 곳도 없다.
+    //
+    // **깊이 맵은 이제 캐러셀에 없지만**(DiaRUGA 123) 이 갈래는 그대로 필요하다 —
+    // *그 묶음에 검출이 없는 프레임*이 같은 판이다.
+    if (!key || !shotDets[key]) {
+      curKey = null;
+      cands = []; rejects = [];
+      removed = new Set(); accepted = new Set();
+      labels = {}; edits = {};
+      curImage = '';
+      var meta0 = document.querySelector('#tabs-' + uid + ' .tabmeta');
+      if (meta0) meta0.textContent = '이 판에는 검출이 없습니다';
+      var cnt0 = document.getElementById('tabcount-' + uid);
+      if (cnt0) cnt0.textContent = '0';
+      sel.clear();
+      build();
+      redraw();
+      return;
+    }
+
+    curKey = key;
+    var st = stateOf(key);
+    cands = st.cands; rejects = st.rejects;
+    removed = st.removed; accepted = st.accepted;
+    labels = st.labels;
+    edits = st.edits || (st.edits = {});
+    curImage = st.image;
+    var meta = document.querySelector('#tabs-' + uid + ' .tabmeta');
+    // **겹쳐 보는 중이면 그렇게 적는다.** 마스크가 보이는데 어느 이미지의 것인지
+    // 말을 안 하면, 사람은 이 프레임에서 검출된 것으로 읽는다.
+    if (meta) meta.textContent = st.summary +
+      (overlay ? ' · 합성본의 검출을 겹쳐 봅니다' : '');
+    // 개체 수도 함께 간다. 아래 표(개체 목록)는 서버가 그린 판 그대로라 판을
+    // 바꾸면 어긋나는데, 수까지 옛것으로 남으면 어긋난 줄도 모른다.
+    var cnt = document.getElementById('tabcount-' + uid);
+    if (cnt) cnt.textContent = st.cands.length - st.removed.size;
+    // **고른 개체는 판을 넘어가지 않는다.** 번호로 짚고 있어서 그대로 두면
+    // 다른 판의 엉뚱한 개체가 골라진 채로 남는다.
+    sel.clear();
+    build();
+    redraw();
+    flashFollowed();
+  }
+
+  // 넘어온 판에서 들고 온 묶음의 짝을 잠깐 밝힌다 (DiaRUGA P11 3단계)
+  var followLinks = [];
+  function flashFollowed() {
+    if (!followLinks.length) return;
+    var ids = followLinks; followLinks = [];
+    cands.forEach(function (c, i) {
+      var lk = linkOf(curImage, keyOf(c));
+      if (!lk || ids.indexOf(lk.id) < 0) return;
+      var el = elByIdx[i];
+      if (!el) return;
+      el.classList.add('linkflash');
+      setTimeout(function () { el.classList.remove('linkflash'); }, 1400);
+    });
+  }
+
+  function commit(i, scroll) {
+    if (i < 0 || i >= shots.length) return;
+    if (shots[current]) shots[current].classList.remove('on');
+    current = i;
+    var s = shots[current];
+    s.classList.add('on');
+    hoverSeq++;
+    paint(s);
+    swapDet(s);
+    committedSrc = s.dataset.view;
+    if (scroll) {
+      var r = s.getBoundingClientRect(), sr = strip.getBoundingClientRect();
+      if (r.left < sr.left) strip.scrollLeft += r.left - sr.left - 8;
+      else if (r.right > sr.right) strip.scrollLeft += r.right - sr.right + 8;
+    }
+  }
+
+  // --- 확대하면 원본 화소를 보여준다 ---------------------------------------
+  // 화면에는 1600 px 축소본을 띄운다(원본 2752 px). 그대로 확대하면 1.7배부터
+  // 없는 화소를 늘리는 셈이어서 areolae 를 눈으로 확인할 수가 없다. 확대가
+  // 시작되면 원본으로 갈아 끼운다 — 요소도 배율도 그대로이므로 화면은 흔들리지
+  // 않고 선명도만 올라간다.
+  var hires = false;
+
+  function maybeHiRes() {
+    if (hires) return;
+    // 지금 띄운 이미지의 실제 화소보다 넓게 그려지기 시작하면 늘려 보고 있는
+    // 것이다. naturalWidth 로 재므로 축소본 폭(1600)을 코드에 박지 않는다.
+    var nat = imgEl.naturalWidth || 0;
+    if (!nat || canvasBox().w * k <= nat) return;
+    var s = shots[current];
+    if (!s || !s.dataset.full) return;
+    hires = true;
+    preload(s.dataset.full, function () {
+      if (!hires) return;
+      paint(shots[current]);
+      committedSrc = imgEl.getAttribute('src');
+      applyTransform();          // 배율 표시에 '원본' 을 붙인다
+    });
+  }
+
+  shots.forEach(function (s, i) {
+    s.addEventListener('mouseenter', function () { preview(i); });
+    s.addEventListener('click', function () { commit(i, true); });
+  });
+  if (strip) strip.addEventListener('mouseleave', unpreview);
+
+  if (shots.length) {
+    shots.forEach(function (s) { s.classList.remove('on'); });
+    shots[current].classList.add('on');
+    paint(shots[current]);
+    committedSrc = shots[current].dataset.view;
+    // **처음 열린 판의 상태를 그 판 이름으로 넣어 둔다** (DiaRUGA P09 1단계).
+    // 서버가 렌더한 것이 이미 전역(cands·removed·…)에 들어 있으므로 다시 읽지
+    // 않고 그대로 등록한다 — 다시 읽으면 사람이 이미 만진 것을 덮는다.
+    //
+    // 이것을 빠뜨리면 **판을 옮겼다 돌아왔을 때 첫 판의 교정이 사라진다**:
+    // `stash()` 가 `curKey` 를 못 찾아 아무것도 안 담고, 돌아올 때
+    // `stateOf` 가 서버 값으로 새로 만든다.
+    if (shotDets) {
+      curKey = shots[current].dataset.detkey || null;
+      if (curKey && shotDets[curKey]) {
+        shotState[curKey] = {
+          cands: cands, rejects: rejects, removed: removed, accepted: accepted,
+          labels: labels, edits: edits, image: curImage,
+          summary: (shotDets[curKey].summary || '')
+        };
+      }
+    }
+    // 초기 표시는 서버가 넣어 둔 src 그대로 두고 캡션만 맞춘다.
+    imgEl.src = committedSrc;
+  }
+
+  // --- 캐러셀 키보드 이동 (← →) --------------------------------------------
+  // 한 페이지에 검출 패널이 둘 이상 있을 수 있다(합성본이 없어 프레임마다 검출한
+  // 그룹). 마지막으로 마우스가 지나간 패널만 화살표에 반응한다 — 둘이 함께
+  // 움직이면 무엇을 보고 있는지 알 수 없게 된다.
+  if (!window.__diarugaActive) window.__diarugaActive = uid;
+  [view, strip].forEach(function (el) {
+    if (el) el.addEventListener('mouseenter', function () { window.__diarugaActive = uid; });
+  });
+
+  // `?shot=last` 처리는 여기 있으면 안 된다 — 초기화 끝(applyTransform/build 뒤)에 있다.
+  // 왜 옮겼는지는 그 자리에 적어 두었다.
+
+  // --- 시야 간 이동 --------------------------------------------------------
+  var GNAV_KEY = 'forgia.crossgroup';        // 'ask'(기본) | 'always'
+  var ask = null;
+
+  function crossPolicy() {
+    // 옛 키도 읽는다 (DiaRUGA 048). '늘 이동' 을 골라 둔 사람에게 다시 묻지 않기 위해서다.
+    try {
+      return localStorage.getItem(GNAV_KEY) || localStorage.getItem('diatom.crossgroup') || 'ask';
+    } catch (err) { return 'ask'; }
+  }
+  function closeAsk() { if (ask) { ask.remove(); ask = null; } }
+
+  function leave(url) {
+    // **밀어낸 것이 나갈 때까지 기다렸다 떠난다** (실사용 2026-08-13).
+    //
+    // `flushSave` 는 약속을 돌려준다 — 묶기(DiaRUGA P11)가 그 뒤에 서려고 그렇게 만든
+    // 것인데 여기서는 안 기다리고 곧바로 `location.href` 를 줬다. keepalive 가
+    // 붙어 있어 대개는 나가지만, `flushSave` 머리말이 적어 둔 대로 **본문이
+    // 64 KB 를 넘으면 브라우저가 보내 보지도 않고 거절한다** — 교정과 그린
+    // 폴리곤이 많은 시야가 정확히 그 크기다.
+    //
+    // **실패하면 안 떠난다.** 떠나면 그 판단이 화면에서도 사라지고, 저장 실패
+    // 띠를 볼 사람이 없다 — 자국 없이 잃는 것이 이 저장소가 되풀이해 당한
+    // 자리다(051·실사용 2026-08-10). `postReview` 는 실패를 예외가 아니라
+    // `savePending` 으로 남기므로 그것을 본다.
+    //
+    // **떠났는가를 돌려준다** (116 덧) — 안 떠났으면 부르는 쪽이 자기 화면을
+    // 되돌려야 한다(엔진 라디오가 그렇다).
+    function go() {
+      // **카탈로그도 못 나갔으면 안 떠난다** (DiaRUGA 183) — 판 교정과 같은 이유다.
+      // 종명·코멘트는 사람이 현미경을 보며 적은 것이라 재생성 불가다.
+      if (savePending || catPending) return false;
+      location.href = url;
+      return true;
+    }
+    // 둘 다 밀어낸다. 카탈로그는 자기 문으로 가므로 약속도 따로다.
+    return Promise.all([flushSave(true), flushCat(true)]).then(go, go);
+  }
+
+  function flashNote(msg) {
+    capNote.textContent = msg;
+    setTimeout(function () { if (shots[current]) paint(shots[current]); }, 1600);
+  }
+
+  function askCross(dir, url, gid) {
+    closeAsk();
+    var word = dir > 0 ? '다음' : '이전';
+    ask = document.createElement('div');
+    ask.className = 'askwrap';
+
+    var box = document.createElement('div');
+    box.className = 'askbox';
+    box.innerHTML =
+      '<h3>' + (dir > 0 ? '이 시야의 마지막 사진입니다'
+                        : '이 시야의 첫 사진입니다') + '</h3>' +
+      '<div>' + word + ' 시야 <b>g' + gid + '</b> 로 넘어갈까요?</div>';
+
+    var label = document.createElement('label');
+    var again = document.createElement('input');
+    again.type = 'checkbox';
+    label.appendChild(again);
+    label.appendChild(document.createTextNode('다음부터는 묻지 않고 바로 넘어가기'));
+    box.appendChild(label);
+
+    var row = document.createElement('div');
+    row.className = 'askrow';
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'go';
+    go.textContent = word + ' 시야로 →';
+    var no = document.createElement('button');
+    no.type = 'button';
+    no.textContent = '여기 머물기';
+    // 머무르기가 왼쪽, 넘어가기가 오른쪽. 진행 방향이 오른쪽이라 그쪽이 자연스럽다.
+    row.appendChild(no);
+    row.appendChild(go);
+    box.appendChild(row);
+    ask.appendChild(box);
+
+    go.addEventListener('click', function () {
+      // 취소할 때는 기억하지 않는다 — 넘어가지 않기로 한 사람에게
+      // "앞으로 묻지 말고 넘어가라" 를 적용하면 뜻이 뒤집힌다.
+      if (again.checked) {
+        try { localStorage.setItem(GNAV_KEY, 'always'); } catch (err) { /* 사생활 모드 */ }
+      }
+      closeAsk();
+      leave(url);
+    });
+    no.addEventListener('click', closeAsk);
+    ask.addEventListener('mousedown', function (e) { if (e.target === ask) closeAsk(); });
+
+    document.body.appendChild(ask);
+    go.focus();
+  }
+
+  function gotoGroup(dir) {
+    var url = dir > 0 ? strip.dataset.next : strip.dataset.prev;
+    if (!url) {
+      flashNote(dir > 0 ? '데이터셋의 마지막 시야입니다' : '데이터셋의 첫 시야입니다');
+      return;
+    }
+    var gid = dir > 0 ? strip.dataset.nextId : strip.dataset.prevId;
+    if (crossPolicy() === 'always') { leave(url); return; }
+    askCross(dir, url, gid);
+  }
+
+  // 사진 한 칸 이동. 끝을 넘어서면 이웃 시야로 넘어갈지 묻는다.
+  // ‹ › 버튼과 ← → 가 같은 길을 쓴다 — 둘이 다르게 움직이면 안 된다.
+  function step(dir) {
+    closeSpread(); closeMenu(); tip.style.display = 'none';
+    var next = current + dir;
+    if (next < 0 || next >= shots.length) gotoGroup(dir);
+    else commit(next, true);
+  }
+
+  // « » 와 Ctrl+화살표 는 시야를 바꾸겠다고 명시한 것이므로 묻지 않는다.
+  function jumpGroup(dir) {
+    var url = dir > 0 ? strip.dataset.next : strip.dataset.prev;
+    if (!url) {
+      flashNote(dir > 0 ? '데이터셋의 마지막 시야입니다' : '데이터셋의 첫 시야입니다');
+      return;
+    }
+    leave(url);
+  }
+
+  var navRow = document.getElementById('nav-' + uid);
+  if (navRow) {
+    navRow.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-nav]');
+      if (!b || b.disabled) return;
+      window.__diarugaActive = uid;      // 누른 패널이 이후 화살표의 주인이 된다
+      var nav = b.dataset.nav;
+      if (nav === 'pshot') step(-1);
+      else if (nav === 'nshot') step(1);
+      else if (nav === 'pgroup') jumpGroup(-1);
+      else if (nav === 'ngroup') jumpGroup(1);
+    });
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.altKey || e.shiftKey) return;
+    // Ctrl(맥은 ⌘)+화살표 = 시야 이동. 사진 이동과 한 손가락 차이로 갈린다.
+    var cross = e.ctrlKey || e.metaKey;
+    if (window.__diarugaActive !== uid || !strip) return;
+    if (!cross && !shots.length) return;
+    // 확인 창이 떠 있으면 그쪽이 먼저다 (Enter/Esc 로 답한다).
+    if (ask) return;
+    var t = document.activeElement;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    // 개체 목록 탭을 보는 중이면 캐러셀은 화면에 없어 사진 이동은 뜻이 없다.
+    // 시야 이동은 페이지를 옮기는 일이라 어느 탭에서든 듣는다.
+    var pane = document.getElementById('pane-view-' + uid);
+    if (!cross && pane && pane.hidden) return;
+
+    e.preventDefault();
+    var dir = e.key === 'ArrowRight' ? 1 : -1;
+    if (cross) jumpGroup(dir);
+    else step(dir);
+  });
+
+  // --- 좌표 변환 -----------------------------------------------------------
+  // 화면 좌표 -> 이미지 픽셀 좌표. 확대/이동이 걸려 있어도 맞는다.
+  // **사진의 상자는 `.canvas` 다 — `.detview` 가 아니다** (DiaRUGA 192).
+  //
+  // 지금까지 둘이 같아서 바깥 상자로 재고 있었는데, 좁은 화면에서는 도구·레이어
+  // 줄이 사진 위가 아니라 **흐름 안**으로 들어온다(손가락 크기로 키우면 사진의
+  // 3분의 1을 덮는다). 그러면 `.detview` 는 그만큼 크고 위쪽이 밀려서, 바깥
+  // 상자로 재는 좌표가 통째로 어긋난다 — 개체를 눌러도 아무것도 안 골라진다.
+  //
+  // `offsetLeft/Width` 는 **변환 전 배치값**이다. `getBoundingClientRect` 는
+  // 확대·이동이 얹힌 상자를 주므로 여기서는 못 쓴다(그 변환을 우리가 다시
+  // 나누고 있다).
+  // **`clientLeft` 는 테두리 두께다.** `offsetLeft` 는 자리를 잡아 준 상자의
+  // *패딩 상자* 기준이고 `getBoundingClientRect` 는 *테두리 상자* 를 주므로,
+  // 둘을 이으려면 그 두께를 더해야 한다 — 안 더하면 1px 씩 어긋난다.
+  function canvasBox() {
+    return { ox: view.clientLeft + canvas.offsetLeft,
+             oy: view.clientTop + canvas.offsetTop,
+             w: canvas.offsetWidth || view.clientWidth || 1,
+             h: canvas.offsetHeight || view.clientHeight || 1 };
+  }
+
+  function toImage(e) {
+    var r = view.getBoundingClientRect();
+    var b = canvasBox();
+    var fx = ((e.clientX - r.left - b.ox) - tx) / (k * b.w);
+    var fy = ((e.clientY - r.top - b.oy) - ty) / (k * b.h);
+    return { x: fx * W, y: fy * H, fx: fx, fy: fy };
+  }
+
+  // 폴리곤의 점 하나를 이미지 안으로 들인다.
+  //
+  // **밖으로 나간 점은 만들지 않는다** (2026-09-03). 서버는 이미지 밖 폴리곤을
+  // 거절하는데(`check_polygon` — 밖에 있는 개체는 그릴 수도 잴 수도 없고 학습
+  // 자료로 나가면 좌표가 뒤집힌 라벨이 된다), 그 거절이 **그 저장 전체를
+  // 버린다.** 경계에 걸친 개체을 그리다 한 점이 넘어가면 그 시야의 판단이
+  // 통째로 안 남는다 — 실사용에서 그렇게 다섯 번 거절됐다. **그릴 때 막는다.**
+  //
+  // 경계에 딱 붙는 것은 받는다 — 서버의 검사도 `> W` 다.
+  function inImage(p) {
+    return [Math.max(0, Math.min(W, Math.round(p.x))),
+            Math.max(0, Math.min(H, Math.round(p.y)))];
+  }
+
+  // --- 박스 렌더 -----------------------------------------------------------
+  function boxStyle(el, b) {
+    el.style.left = (100 * b[0] / W) + '%';
+    el.style.top = (100 * b[1] / H) + '%';
+    el.style.width = (100 * b[2] / W) + '%';
+    el.style.height = (100 * b[3] / H) + '%';
+  }
+  var showGone = true;
+
+  var svg = document.getElementById('masks-' + uid);
+  var polys = [];
+
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function pointsOf(p) {
+    var pts = [];
+    for (var j = 0; j < p.length; j += 2) pts.push(p[j] + ',' + p[j + 1]);
+    return pts.join(' ');
+  }
+
+  function addPolygon(c, i) {
+    var p = c.polygon;
+    if (!p || p.length < 6) return null;   // 삼각형도 안 되면 그리지 않는다
+    var el = document.createElementNS(SVGNS, 'polygon');
+    el.setAttribute('points', pointsOf(p));
+    // 사람이 분류를 지정했으면 그 색이 먼저다. 아니면 수동복구(주황) > 자동 판정.
+    el.setAttribute('class', c.cls_user ? c.cls
+      : (c.manual ? 'manual' : (c.cls || 'none')));
+    el.dataset.i = i;
+    svg.appendChild(el);
+    polys.push(el);
+    return el;
+  }
+
+  // 탈락 후보 레이어 — 테두리만 그린다. 통과분 마스크보다 먼저 넣어 아래에
+  // 깔리게 한다(SVG 는 문서 순서대로 그린다).
+  var rejPolys = [];
+
+  function buildRejects() {
+    rejPolys.forEach(function (el) { el.remove(); });
+    rejPolys = [];
+    rejects.forEach(function (c) {
+      if (!hasPoly(c) || accepted.has(keyOf(c))) return;
+      var el = document.createElementNS(SVGNS, 'polygon');
+      el.setAttribute('points', pointsOf(c.polygon));
+      el.setAttribute('class', 'reject');
+      svg.appendChild(el);
+      rejPolys.push(el);
+    });
+  }
+
+  // 개체 번호 → 그 개체의 상자. **커서 판정이 이것을 쓴다** — 상자마다 이벤트를
+  // 걸던 때에는 `els` 의 자리(지운 것을 건너뛰므로 어긋난다)와 개체 번호가 달랐다.
+  var elByIdx = {};
+
+  function build() {
+    els.forEach(function (el) { el.remove(); });
+    els = [];
+    elByIdx = {};
+    polys.forEach(function (el) { el.remove(); });
+    polys = [];
+    buildRejects();
+    cands.forEach(function (c, i) {
+      var gone = removed.has(keyOf(c));
+      if (gone && !showGone) return;
+      var el = document.createElement('div');
+      // **엔진이 안 낸 개체는 지운 것에도 표시가 남는다** (DiaRUGA P09 2단계). 고아는
+      // 되살릴 후보가 없어서, 지운 상태로 두면 화면에서 영영 안 보인다 —
+      // "지웠다" 는 것과 "엔진이 안 냈다" 는 다른 이야기이고 둘 다 보여야 한다.
+      el.className = 'box' + (gone ? ' gone'
+        : (c.cls ? ' ' + c.cls : '') + (c.manual ? ' manual' : '') +
+          (c.cls_user ? ' userset' : '')) + (c.orphan ? ' orphan' : '');
+      boxStyle(el, c.bbox_xywh);
+      el.dataset.i = i;
+      el.dataset.gone = gone ? '1' : '';
+      // 묶인 개체 표시 (DiaRUGA P11 3단계) — 사슬은 CSS 의 ::after 가 그린다.
+      if (!gone && typeof linkOf === 'function'
+          && linkOf(linkImage || curImage, keyOf(c))) {
+        el.classList.add('linked');
+      }
+      // 링크가 짚어 온 개체 (DiaRUGA 118). **그릴 때마다 키로 다시 맞춘다** — 판을
+      // 넘겼다가 돌아와도, 지운 것을 감췄다 켜도 같은 개체에 표시가 남는다.
+      if (hlKey && keyOf(c) === hlKey) el.classList.add('hl');
+      // 지운 것은 마스크를 칠하지 않는다 — 점선 테두리만 남겨 아래 이미지를 본다.
+      if (!gone) addPolygon(c, i);
+      canvas.appendChild(el);
+      els.push(el);
+      elByIdx[i] = el;
+    });
+    redraw();
+    // 판이 바뀌면 커서 아래의 개체도 바뀐다 — 옛 개체의 말풍선이 남으면 안 된다.
+    hideTip();
+  }
+
+  // --- 커서가 가리키는 개체 (DiaRUGA 072) ------------------------------------------
+  //
+  // **클릭과 같은 함수로 정한다.** 예전에는 상자마다 `mouseenter` 를 걸어
+  // **DOM 에서 맨 위에 있는 상자**가 말풍선을 냈고, 클릭은 `topHitAt` 으로
+  // **마스크 안에 든 것 중 가장 작은 것**을 골랐다. 두 규칙은 서버가 개체를
+  // 면적 내림차순으로 내려 주는 동안에만 우연히 같았다 — 겹친 자리에서
+  // 어긋났고(실측 2~4%), **말풍선이 A 를 설명하는데 클릭은 B 를 고른다.**
+  //
+  // 겹침이 흔한 화면이라 이것은 오독으로 이어진다: 말풍선의 크기·분류를 보고
+  // 판단한 뒤 클릭해 분류를 바꾸면 **다른 개체에 그 분류가 앉는다.**
+  var hotIdx = null;
+
+  function hideTip() {
+    if (hotIdx != null && elByIdx[hotIdx]) elByIdx[hotIdx].classList.remove('hot');
+    hotIdx = null;
+    tip.style.display = 'none';
+  }
+
+  function hoverAt(ev) {
+    // **그리는 중에는 커서 자리를 그리기 상태에 넘긴다** (DiaRUGA 082) — 마지막 점에서
+    // 여기까지 점선이 따라온다. 말풍선은 그때도 방해만 되므로 감춘다.
+    if (drawing) {
+      hideTip();
+      if (canvas.contains(ev.target)) {
+        var q = toImage(ev);
+        drawing.at = [q.x, q.y];
+        drawRender();
+      }
+      return;
+    }
+    // 끌거나 고치는 중에도 말풍선은 방해만 된다.
+    if (editing || mode) { hideTip(); return; }
+    // **사진 위에서만 잰다.** `view` 안에는 도구줄·레이어 칸도 들어 있어서,
+    // 그 위를 지날 때도 좌표를 재면 엉뚱한 개체의 말풍선이 뜬다.
+    if (!canvas.contains(ev.target)) { hideTip(); return; }
+    var i = topHitAt(toImage(ev));
+    if (i === null) { hideTip(); return; }
+    if (i !== hotIdx) {
+      hideTip();
+      hotIdx = i;
+      var el = elByIdx[i];
+      if (el) el.classList.add('hot');
+      var c = cands[i];
+      var gone = removed.has(keyOf(c));
+      tip.innerHTML = tipHtml(c) +
+        (gone ? '<div class="dim">오검출로 지움 — 클릭하면 되살린다' +
+                (c.from_reject
+                  ? '<br>지금 문턱에서는 탈락분이다 (되살리면 수동 복구로 남는다)'
+                  : '') + '</div>'
+              : '');
+      tip.style.display = 'block';
+    }
+    placeTip(ev);
+  }
+
+  view.addEventListener('mousemove', hoverAt);
+  view.addEventListener('mouseleave', hideTip);
+
+  // --- 교정 이력 (Ctrl+Z) ---------------------------------------------------
+  var history = [];
+
+  function restore(keys) {
+    keys.forEach(function (key) {
+      if (!removed.has(key)) return;
+      removed.delete(key);
+      // 탈락분에서 온 개체는 되살릴 때 복구 목록에 넣어야 한다 — 그러지 않으면
+      // 화면에서는 살아나지만 저장되지 않아 새로고침에 사라진다.
+      var c = cands.find(function (x) { return keyOf(x) === key; });
+      if (c && (c.from_reject || c.manual)) accepted.add(key);
+    });
+  }
+
+  function undo() {
+    var last = history.pop();
+    if (!last) { saveState.textContent = '되돌릴 내용이 없습니다'; return; }
+    if (last.type === 'remove') {
+      restore(last.keys);
+    } else if (last.type === 'restore') {
+      last.keys.forEach(function (key) {
+        removed.add(key);
+        accepted.delete(key);
+      });
+    } else if (last.type === 'label') {
+      last.items.forEach(function (it) {
+        var c = cands[it.i];
+        if (!c) return;
+        c.cls = it.cls;
+        c.cls_user = it.user;
+        if (it.folded) c.cls_folded = true; else delete c.cls_folded;
+        if (it.auto === undefined) delete c.cls_auto; else c.cls_auto = it.auto;
+        if (it.manual) return;             // 그린 개체는 drawn 이 나른다
+        if (it.user) labels[it.key] = it.cls; else delete labels[it.key];
+      });
+    } else if (last.type === 'accept') {
+      accepted.delete(last.key);
+      var idx = cands.findIndex(function (x) { return keyOf(x) === last.key; });
+      if (idx >= 0) { rejects.push(cands[idx]); cands.splice(idx, 1); }
+      sel.clear();
+    }
+    build();
+    save();
+  }
+
+  function visible() { return cands.filter(function (c) { return !removed.has(keyOf(c)); }); }
+
+  function redraw() {
+    els.forEach(function (el) {
+      el.classList.toggle('sel', sel.has(+el.dataset.i));
+    });
+    polys.forEach(function (el) { el.classList.toggle('sel', sel.has(+el.dataset.i)); });
+    var picked = Array.from(sel).map(function (i) { return cands[i]; })
+      .filter(function (c) { return c && !removed.has(keyOf(c)); });
+    if (!picked.length) {
+      // 지운 것만 골랐을 때. **"선택 없음" 이라고 하면 안 된다** — 유령을
+      // Shift+클릭으로 고를 수 있게 된 뒤로는(스페이스 되살리기의 전제) 골라
+      // 놓고도 아무 일이 없는 것처럼 보인다.
+      var ghosts = Array.from(sel).filter(function (i) {
+        return cands[i] && removed.has(keyOf(cands[i]));
+      });
+      if (ghosts.length && !readOnly) {
+        info.className = '';
+        info.innerHTML = '<b>지운 개체 ' + ghosts.length + '개 선택</b> ' +
+          '<span class="dim">· Space 로 되살립니다</span>';
+      } else {
+        info.textContent = '선택 없음'; info.className = 'dim';
+      }
+    } else {
+      var sizes = picked.map(function (c) { return +c.major_um || 0; }).sort(function (a, b) { return a - b; });
+      info.className = '';
+      info.innerHTML = '<b>' + picked.length + '개 선택</b> · 장축 중앙 ' +
+        sizes[Math.floor(sizes.length / 2)].toFixed(1) + ' µm (' +
+        sizes[0].toFixed(1) + '~' + sizes[sizes.length - 1].toFixed(1) + ')';
+    }
+    // 겹친 자리에서 순환 중이면 몇 개 중 몇 번째인지 알린다 — 아래에 더 있다는
+    // 것을 모르면 다시 누를 이유가 없다.
+    if (cycle && cycle.n > 1 && sel.size === 1 && sel.has(cycle.pick)) {
+      info.innerHTML += ' <span class="dim">· 이 자리에 ' + cycle.n + '개 겹침 (' +
+        (cycle.at + 1) + '/' + cycle.n + ') — 다시 클릭하면 다음</span>';
+    }
+    var n = removed.size, m = accepted.size;
+    saveState.textContent = (n || m)
+      ? '검토: 삭제 ' + n + ' · 복구 ' + m + (history.length ? ' · Ctrl+Z 로 취소' : '')
+      : '';
+    // 오른쪽 칸의 카탈로그도 고른 것을 따라간다 (DiaRUGA 183). **여기서 부른다** —
+    // 선택이 바뀌는 길이 여럿이라(클릭·범위·단축키·묶음 따라가기) 그 자리마다
+    // 부르면 한 곳을 빠뜨리고, 그러면 그 길로 고른 개체만 옛 카드를 본다.
+    catFill();
+  }
+
+  // --- 저장 ----------------------------------------------------------------
+  var saveTimer = null, savePending = false;
+
+  // **읽기 전용 화면에서는 아예 보내지 않는다.** CSS 로 도구를 감추는 것으로는
+  // 못 막는다 — 마스크 클릭 자체가 save() 를 부르고, 그 POST 는 그 시야의
+  // 교정을 통째로 갈아치운다. 실제로 /engine/ 에서 그렇게 37건을 잃었다.
+  var readOnly = document.getElementById('ro-' + uid) !== null;
+
+  // 막혀 있으면 막혀 있다고 적는다. 표식 하나(`ro-<uid>`)로 저장 차단과 화면
+  // 표시가 함께 갈린다 — 따로 두면 한쪽만 켜진 화면이 나온다.
+  var roFlag = document.getElementById('roflag-' + uid);
+  if (roFlag && readOnly) roFlag.hidden = false;
+  // 시야 코멘트도 잠근다. 적을 수는 있는데 저장이 안 되면 적은 것을 잃는다.
+  // 규격의 keepalive 상한은 64 KiB 다. 헤더·인코딩 여유를 두고 잡는다.
+  var KEEPALIVE_MAX = 60000;
+
+  function postReview(keepalive) {
+    savePending = false;
+    if (readOnly) {
+      saveState.textContent = '읽기 전용 화면 — 저장하지 않습니다';
+      return Promise.resolve();
+    }
+    // **검출이 없는 판에는 저장하지 않는다** (180 B1 · 2026-09-03).
+    //
+    // 그 판을 고르면 `curImage` 가 비고, 그대로 보내면 서버가 **대표
+    // 이미지(합성본)** 로 받는다 — 그 요청이 합성본의 그린 개체와 교정을
+    // 갈아치우는데 화면은 "저장됨" 이라고 적는다. 116 이 이 갈래를 알고 완료만
+    // 떼어 냈고, 교정 쪽은 여기서 막는다.
+    //
+    // **잃는 것이 없다.** 그 판에는 개체가 하나도 없고(캐러셀이 비운다),
+    // 시야에 붙는 둘(완료·코멘트)은 자기 문으로 간다.
+    //
+    // **`curKey` 로 재지 않는다** — 캐러셀이 없는 화면(판이 하나)에서는 그것이
+    // 늘 `null` 이라 멀쩡한 시야의 저장까지 막는다. 저장할 곳이 있느냐는
+    // `curImage` 가 말한다(`data-image` 로 서버가 넣어 준다).
+    if (curImage === '') {
+      saveState.textContent = '이 판에는 검출이 없어 저장할 곳이 없습니다';
+      return Promise.resolve();
+    }
+    // **미리보기 중이면 갈무리한 고른 판의 것으로 보낸다** (074의 남은 창).
+    // 전역은 지금 스친 판의 것인데 `image` 는 고른 판(curImage)이다 — 지연
+    // 저장(400ms)이 미리보기 도중에 나가면 **스친 판의 상태가 고른 판의
+    // 이미지로 실려** 고른 판의 교정을 갈아치운다. 미리보기가 removed 까지
+    // 갈아 끼우게 되면서(지운 마스크가 살아 보이던 고침) 이 창이 실제로
+    // 물었다 — 시험이 잡았다.
+    var S = (previewing && curKey && shotState[curKey])
+      ? shotState[curKey]
+      : { cands: cands, removed: removed, accepted: accepted,
+          labels: labels, edits: edits };
+    // **본문을 먼저 만든다** — `keepalive` 를 붙일지가 그 크기에 달렸다.
+    var body = JSON.stringify({
+      stem: stem,
+      slug: vpSlug,
+      gid: vpGid === '' ? null : Number(vpGid),
+      // **어느 이미지를 보고 한 교정인가** (DiaRUGA P09 1단계). 캐러셀이 판을 바꾸면
+      // 여기도 따라 바뀐다. 비어 있으면 안 보내고 서버가 대표 이미지로 받는다 —
+      // 판이 하나뿐인 화면과 배포 중에 열려 있던 옛 탭이 그 갈래로 간다.
+      image: curImage === '' ? null : Number(curImage),
+      // **사람이 그린 개체는 통째로 보낸다** (DiaRUGA P09 3단계). `cands` 안에 있는
+      // 것이 곧 화면의 전부이므로 거기서 뽑는다 — 따로 목록을 들면 둘이
+      // 어긋나고, 어긋난 쪽이 저장된다.
+      //
+      // **판마다 다르다.** 캐러셀이 판을 바꾸면 `cands` 가 그 판의 것으로
+      // 갈리므로 이 목록도 함께 간다.
+      // **엔진 개체의 고친 기하** (DiaRUGA P09 4단계). `{키: 폴리곤}` 이고 빈 배열은
+      // "엔진 것으로 되돌린다" 는 말이다.
+      //
+      // **화면이 아는 전부를 보낸다 — `edits` 만 보내면 안 된다.** 그 지도는
+      // *이번에 연 화면에서* 고친 것만 담는다. 화면을 나갔다 들어오면 비어
+      // 있고, 그 상태에서 다른 마스크를 고치면 payload 에 그것 하나만 실린다 —
+      // `save_review` 는 `keys` 에 없는 행을 지우므로 **앞서 고친 것이
+      // 사라진다.** 분류가 함께 붙어 있으면 `labels` 를 타고 살아남아서,
+      // "되는 경우도 있고 아닌 경우도" 가 된다.
+      //
+      // `drawn` 이 `cands` 에서 뽑히는 것과 같은 규칙으로 맞춘다 —
+      // **뷰어는 늘 전체를 보낸다.**
+      edits: (function () {
+        var out = {};
+        S.cands.forEach(function (c) {
+          if (!isManual(c) && c.geom_edited && c.polygon && c.polygon.length) {
+            out[keyOf(c)] = c.polygon;
+          }
+        });
+        // 되돌리기(빈 배열)는 개체에 안 남으므로 지도 쪽이 이긴다.
+        Object.keys(S.edits).forEach(function (k) {
+          if (!S.edits[k] || !S.edits[k].length) out[k] = [];
+        });
+        return out;
+      })(),
+      //
+      // **지운 것은 목록에서 빠진다** (DiaRUGA P09 5.10 · 2026-09-03). 그린 개체를
+      // 지우는 것은 행을 지우는 것이고, 그 말은 `drawn` 에 없다는 것이다 —
+      // 화면은 지운 것도 `cands` 에 남겨 흔적을 보이고 Ctrl+Z 를 받지만,
+      // 그것을 그대로 실어 보내면 서버는 "안 지웠다" 로 읽는다.
+      // **접어 온 유형은 안 싣는다** (`data.fold_object_cls`). 손그림 판은
+      // 후보가 없어 유형이 없고, 옆 판의 엔진 값을 개체째 접어 색만 맞춰
+      // 놓은 것이다 — 그것을 실어 보내면 `_save_drawn` 이 그대로
+      // `ForamObject.label` 에 적어 **엔진의 추측이 사람이 지정한 유형
+      // 자리에 눌러앉는다.** 사람이 실제로 지정하면 `cls_folded` 가 걷힌다.
+      drawn: S.cands.filter(function (c) {
+        return isManual(c) && !S.removed.has(keyOf(c));
+      }).map(function (c) {
+        return { key: keyOf(c), polygon: c.polygon,
+                 cls: (c.cls_folded ? '' : (c.cls || '')) };
+      }),
+      // **완료와 시야 코멘트는 여기 안 싣는다** (180 B2 · 2026-09-03).
+      //
+      // 둘 다 **시야에 붙는 것**이고 판마다 다르지 않다 — 116 이 완료를 떼어
+      // 냈는데(`{"only":"done"}`) 판 payload 에는 그대로 실려 다녔다. 그래서
+      // 같은 시야를 두 탭으로 열면 **한쪽에서 켠 완료와 적은 글을 다른 탭의
+      // 마스크 저장 한 번이 되돌렸다** — 어느 화면도 아무 말을 안 한다.
+      // 완료는 `postDone`, 코멘트는 `postNote` 가 자기 문으로 보낸다.
+      // **그린 개체의 키는 여기 안 싣는다** (2026-09-03). 이 둘은 엔진 개체의
+      // 목록이라 서버가 `(image, batch)` 로 아는 키와 맞춰 보는데, 그린 개체는
+      // `batch=NULL` 이라 거기 없다 — "현재 검출에 없는 개체" 로 **저장 전체가
+      // 거절되고**, 한 번 그러면 그 시야의 이후 저장이 계속 실패한다. 실사용에서
+      // 하루에 101건이 그렇게 날아갔다. 지우기는 위 `drawn` 이 나른다.
+      removed: Array.from(S.removed).filter(function (k) {
+        return !isManualKey(S.cands, k);
+      }),
+      accepted: Array.from(S.accepted).filter(function (k) {
+        return !isManualKey(S.cands, k);
+      }),
+      // **개체 코멘트는 안 보낸다** (0036) — 카탈로그에서만 적는다.
+      // 시야 코멘트도 여기 없다 — `postNote` 가 자기 문으로 보낸다(위 주석).
+      labels: S.labels
+    });
+    // **keepalive 는 본문이 작을 때만 붙인다** (116 덧 · 2026-08-13).
+    //
+    // keepalive 는 페이지가 사라져도 브라우저가 대신 보내 주는 요청인데,
+    // 그래서 규격이 **본문 64 KiB** 로 상한을 뒀다 — 넘으면 보내 보지도 않고
+    // `TypeError` 로 **거절한다**(HTTP 오류가 아니라 약속의 거절이라 아래
+    // `.catch` 로 떨어진다). 교정과 그린 폴리곤이 많은 시야가 그 크기다.
+    //
+    // **이제 안 붙여도 된다** (DiaRUGA 116). `leave()` 가 이 약속을 기다렸다 떠나므로
+    // 페이지가 응답 때까지 살아 있다 — keepalive 가 값을 하는 것은 사람이 탭을
+    // 닫아 버리는 순간뿐이고, 그건 본문이 작을 때만 되는 일이다. 작으면 그
+    // 이득을 그대로 누리고, 크면 **거절당하는 대신 그냥 보낸다.**
+    return env.send('review', ROOT + '/review', {
+      method: 'POST',
+      keepalive: !!keepalive && body.length < KEEPALIVE_MAX,
+      headers: { 'Content-Type': 'application/json' },
+      body: body
+    }).then(function (r) {
+      if (r.ok) {
+        saveState.textContent =
+          '저장됨 — 삭제 ' + S.removed.size + ' · 복구 ' + S.accepted.size +
+          (reviewDone ? ' · 검토 완료' : '');
+        saveFailed(false);
+        // 묶음을 따라 번진 분류·코멘트를, 그리고 판마다 복제된 그린 마스크를
+        // 다른 판의 상태에도 옮긴다 (아래 주석). **둘 다 안 하면 자료를 잃는다.**
+        return r.json().then(function (j) {
+          spreadLabels(j && j.linked);
+          spreadDrawn(j && j.drawn_spread);
+          // **묶인 그 순간에 사슬이 뜬다.** `links` 는 페이지가 열릴 때 한 번
+          // 받는 값이라, 안 갈면 그린 마스크가 판마다 묶였는데도 배지가 새로고침
+          // 전까지 안 뜬다 — 사람이 "번졌다" 를 알아채는 근거가 그것이다.
+          // `/link` 응답 쪽(아래 `links = r.j.links`)과 같은 모양이다.
+          if (j && j.links) { links = j.links; build(); }
+          flashDrawnLinked(j && j.drawn_spread);
+        }, function () {});
+      }
+      // **실패는 다시 저장할 것으로 남는다.** 첫 줄이 savePending 을 끄므로
+      // 여기서 되살리지 않으면 flushSave 가 "할 일 없음" 으로 지나가고, 방금
+      // 그린 마스크가 화면에는 있는데 DB 에는 영영 없는 상태가 된다 — 묶기가
+      // "이 화면의 마스크가 아니다" 로 거절한 그 자리다 (실사용 g25).
+      savePending = true;
+      // **서버가 말한 이유를 그대로 옮긴다.** 409 를 전부 "아직 검토를 열지
+      // 않았습니다" 로 적고 있었는데, 실제로는 판이 어긋났다는 다른 이야기였다 —
+      // 사람은 안 겪은 문제를 찾으러 갔다 (실사용 2026-08-10).
+      return r.json().then(function (j) { return j && j.error; },
+                          function () { return ''; })
+        .then(function (why) {
+          saveState.textContent = '저장하지 못했습니다 — 다음 동작에서 다시 시도합니다';
+          saveFailed(true, why || (r.status === 409
+            ? '서버가 이 저장을 받지 않았습니다 (DiaRUGA 409)'
+            : '서버 오류 ' + r.status));
+        });
+    }).catch(function () {
+      savePending = true;
+      saveState.textContent = '저장하지 못했습니다 (연결 확인) — 다시 시도합니다';
+      saveFailed(true, '서버에 닿지 못했습니다 — 연결을 확인할 것');
+    });
+  }
+
+  // **검토 완료는 교정을 안 싣고 혼자 간다** (116 덧 · 2026-08-13).
+  //
+  // 완료는 **시야에 붙는 표시**이고(`(시야, 묶음)` 한 줄) 교정은 판마다다
+  // (`(이미지, 묶음)`). 층이 다른 둘을 한 payload 에 실었더니 표시 하나를
+  // 켜는 일이 **그 판의 교정을 갈아치우는 일**이 됐고, 그래서 "어느 판을
+  // 고르고 있나" 가 완료에까지 걸렸다.
+  //
+  //   · 지나가는 판을 거르는 자리(DiaRUGA 074)가 완료까지 삼켰다 — 화면만 켜지고
+  //     서버는 못 받는다 (116 이 잡은 것)
+  //   · 검출이 없는 판을 고르면 `curImage` 가 비어 저장이 **대표 이미지**로
+  //     가고, 그 판의 교정이 지워진다 (사본에서 재현했다). 그때 예로 든 것은
+  //     깊이 맵이었는데 **123 에서 캐러셀에서 뺐다** — 그 묶음에 검출이 없는
+  //     프레임이 같은 판이라 갈래는 남는다
+  //
+  // 그래서 **완료만 보낸다.** 지울 것이 없으니 어느 판을 보고 있든 상관없고,
+  // 판의 교정은 지연 저장과 판 옮길 때의 `flushSave` 가 이미 내보낸다.
+  //
+  // **`savePending` 은 안 건드린다** — 그것은 판 payload 의 것이다. 완료는
+  // 실패하면 되돌린다(부르는 쪽), 다시 시도할 것으로 쌓아 두지 않는다.
+  function postDone(on) {
+    if (readOnly) {
+      saveState.textContent = '읽기 전용 화면 — 저장하지 않습니다';
+      return Promise.resolve(false);
+    }
+    return env.send('review', ROOT + '/review', {
+      method: 'POST',
+      // 본문이 작아 64 KB 문턱과 무관하다 — 탭을 닫아도 나간다.
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        only: 'done',
+        stem: stem,
+        slug: vpSlug,
+        gid: vpGid === '' ? null : Number(vpGid),
+        done: !!on
+      })
+    }).then(function (r) {
+      if (r.ok) {
+        saveState.textContent = on ? '검토 완료로 표시했습니다'
+                                   : '검토 완료를 해제했습니다';
+        saveFailed(false);
+        return true;
+      }
+      // 서버가 말한 이유를 그대로 옮긴다 (`postReview` 와 같은 규칙).
+      return r.json().then(function (j) { return j && j.error; },
+                          function () { return ''; })
+        .then(function (why) {
+          saveState.textContent = '검토 완료를 저장하지 못했습니다';
+          saveFailed(true, why || ('서버 오류 ' + r.status));
+          return false;
+        });
+    }, function () {
+      saveState.textContent = '검토 완료를 저장하지 못했습니다 (연결 확인)';
+      saveFailed(true, '서버에 닿지 못했습니다 — 연결을 확인할 것');
+      return false;
+    });
+  }
+
+  // **개체 카탈로그는 자기 문으로 간다** (183 · `/catalog/save`).
+  //
+  // 개체 하나만 고치는 좁은 문이라 `/review` 처럼 그 판의 교정 전체를
+  // 갈아치우지 않는다 — 017·027·053 계열의 사고가 구조적으로 안 생긴다
+  // (`views.save_catalog` 머리말).
+  //
+  // **유형은 여기로 안 보낸다.** 그 칸은 판 payload 가 `labels` 로 **늘 통째로**
+  // 보내는 것이라, 다른 문으로 적으면 화면이 모르는 값이 되어 **다음 저장이
+  // 방금 적은 것을 지운다**(104 가 그 자리다). 유형만 `setLabel` 로 간다.
+  //
+  // **실패는 다시 보낼 것으로 남긴다** — 판 교정의 `savePending` 과 같은
+  // 규칙이고, 서로 안 섞이게 깃발을 따로 둔다.
+  var catPending = false, catTimer = null, catQueue = null;
+
+  // **마지막 화면 상태 하나만 보낸다.** 칸이 넷이라 하나씩 큐에 쌓으면 응답이
+  // 뒤집힐 때 옛 값이 나중에 앉는다 — 카탈로그 카드가 카드 한 장을 통째로
+  // 보내는 것과 같은 규칙이다.
+  function saveCat(key, fields) {
+    if (readOnly) return;
+    catQueue = { key: key, fields: fields };
+    catPending = true;
+    clearTimeout(catTimer);
+    catTimer = setTimeout(function () { postCat(); }, 400);
+  }
+
+  function flushCat(leaving) {
+    if (!catPending) return Promise.resolve();
+    clearTimeout(catTimer);
+    return postCat(!!leaving);
+  }
+
+  function postCat(keepalive) {
+    var q = catQueue;
+    catPending = false;
+    if (readOnly || !q) return Promise.resolve();
+    // **검출이 없는 판에는 저장할 곳이 없다** (`postReview` 와 같은 규칙 · 180 B1).
+    // 서버도 그 이미지에 현재 검출이 없으면 409 로 물린다.
+    if (curImage === '') {
+      catPending = true;
+      catSay('이 판에는 검출이 없어 저장할 곳이 없습니다', true);
+      return Promise.resolve();
+    }
+    return env.send('catalog', CAT_SAVE_URL, {
+      method: 'POST',
+      // 본문이 칸 넷이라 64 KiB 문턱과 무관하다 (`flushSave` 머리말).
+      keepalive: !!keepalive,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        act: 'save',
+        gid: vpGid === '' ? null : Number(vpGid),
+        image: Number(curImage),
+        key: q.key,
+        species: q.fields.species,
+        grade: q.fields.grade,
+        pose: q.fields.pose,
+        note: q.fields.note
+      })
+    }).then(function (r) {
+      return r.json().then(function (j) { return [r.ok, j]; },
+                           function () { return [r.ok, null]; });
+    }, function () { return [false, null]; })
+      .then(function (p) {
+        if (!(p[0] && p[1] && p[1].ok)) {
+          // 서버가 말한 이유를 그대로 옮긴다 (`postReview` 와 같은 규칙).
+          catPending = true;
+          catSay('저장하지 못했습니다 — ' +
+                 ((p[1] && p[1].error) || '서버에 닿지 못했습니다'), true);
+          return;
+        }
+        catApply(q.key, p[1]);
+        catSay('저장했습니다' + (p[1].spread
+          ? ' · 같은 개체의 다른 판 ' + p[1].spread + '장도 같은 값입니다' : ''));
+      });
+  }
+
+  // **응답으로 화면을 맞춘다 — 보낸 값이 아니다.** 서버가 다듬고(공백·길이),
+  // 표시가 하나도 안 남으면 **그 줄을 지운다**(`_catalog_prune`) — 그때는
+  // 카드가 없어진 것이라 화면도 그렇게 말해야 한다.
+  //
+  // **같은 개체의 다른 판까지 맞춘다** (DiaRUGA 183). 종명·코멘트·등급·자세는 개체에
+  // 살아서 서버는 이미 한 값인데, 화면은 열릴 때 받은 옛 값을 판마다 들고
+  // 있다 — 판을 넘기면 방금 적은 것이 안 보이고, 사람이 같은 것을 두 번 적는다.
+  function catApply(key, j) {
+    var rows = [];
+    cands.forEach(function (c) { if (keyOf(c) === key) rows.push(c); });
+    var lk = (typeof linkOf === 'function') ? linkOf(curImage, key) : null;
+    if (lk && shotDets) {
+      lk.members.forEach(function (m) {
+        Object.keys(shotDets).forEach(function (k) {
+          if (Number(shotDets[k].image) !== Number(m.image)) return;
+          stateOf(k).cands.forEach(function (c) {
+            if (keyOf(c) === m.mask_key && rows.indexOf(c) < 0) rows.push(c);
+          });
+        });
+      });
+    }
+    rows.forEach(function (c) {
+      c.species = j.species || '';
+      c.note = j.note || '';
+      c.grade = j.grade || '';
+      c.pose = j.pose || '';
+      if (j.kept === false) {
+        // 표시가 안 남아 판정 줄이 지워졌다 — 개체도 카드도 없다.
+        c.obj_id = null;
+        c.catalog_no = '';
+        c.linked_n = 0;
+      } else {
+        // 처음 적으면 이 순간 개체가 생긴다 (`_catalog_target`) — 서버가 준
+        // 것으로 채운다. 화면이 스스로 지어내면 카드가 있는지를 화면과 DB 가
+        // 다르게 말하게 된다.
+        if (!c.obj_id) { c.no_here = true; c.linked_n = 1; }
+        c.obj_id = j.obj_id;
+        c.catalog_no = j.catalog_no || '';
+      }
+    });
+    catFill();
+  }
+
+  // **저장 실패는 크게 말한다** (실사용 2026-08-10).
+  //
+  // 회색 글씨 한 줄이 지나가는 동안 마스크는 화면에서 지워진 채였고, 사람은
+  // 검토를 이어 갔다. 오검출 둘을 지운 판단이 DB 에 하나도 안 남았는데
+  // **화면은 끝까지 된 것처럼 굴었다** — 읽기 전용에서 배운 것과 같은 이야기다
+  // (DiaRUGA 051): 되는 것처럼 보이는 것이 안 되는 것보다 나쁘다.
+  //
+  // 그래서 성공할 때까지 **안 사라지는 띠**를 세운다.
+  var failBar = null;
+  function saveFailed(on, why) {
+    if (!on) { if (failBar) { failBar.remove(); failBar = null; } return; }
+    if (!failBar) {
+      failBar = document.createElement('div');
+      failBar.className = 'errbar savefail';
+      // **`.detview` 앞에 끼우면 안 된다.** 그 부모(`.detrow`)는 사진과 코멘트
+      // 목록을 나란히 두는 flex 행이라, 띠가 **행의 한 칸을 차지해** 사진을
+      // 밀어낸다 — 우클릭이 사진 밖으로 떨어져 메뉴가 안 열렸다(096 시험이
+      // 잡았다). 저장 상태 줄(`.detbar`) 다음의 블록 자리에 세운다.
+      var bar = saveState ? saveState.parentNode : null;
+      if (bar && bar.parentNode) {
+        bar.parentNode.insertBefore(failBar, bar.nextSibling);
+      } else {
+        view.parentNode.insertBefore(failBar, view);
+      }
+    }
+    failBar.textContent = '⚠ 저장되지 않았습니다 — ' + (why || '') +
+      ' · 이 화면의 판단은 아직 DB 에 없습니다';
+  }
+
+  // **묶음을 따라 번진 분류를 화면에도 옮긴다** (DiaRUGA P11 · 2026-08-10).
+  //
+  // 서버가 "이 묶음의 나머지 판에도 같은 분류를 적었다" 고 알려 온다. 그걸
+  // 흘리면 두 가지가 어긋난다.
+  //
+  //   1. 판을 넘겨야 보인다 — 새로고침 전에는 옛 분류다 (102 덧 2 와 같은 자리)
+  //   2. **그 판의 다음 저장이 도로 지운다** — 화면의 `labels` 는 열릴 때 받은
+  //      것이라 번진 분류를 모르고, 뷰어는 늘 전체를 보낸다
+  //
+  // 두 번째가 더 나쁘다. 화면은 아무 말도 안 하고, 사람이 다른 판에서 뭔가를
+  // 지운 순간 앞서 지정한 분류가 사라진다.
+  //
+  // **`shotDets`(서버가 준 처음 상태)와 `shotState`(사람이 만진 것) 둘 다**
+  // 고친다 — 아직 안 열어 본 판은 앞엣것에서 상태가 만들어진다.
+  //
+  // **분류만 온다.** 개체에 사는 값은 넷 더 있지만(종명·등급·자세·코멘트) 이
+  // 화면이 되돌려 보내는 것은 분류뿐이라, 나머지는 이 화면이 지울 수가 없다
+  // (0036 에서 코멘트가 그쪽으로 갔다 — `linked_siblings` 머리말).
+  function spreadLabels(map) {
+    if (!map || !shotDets) return;
+    var byImage = {};
+    Object.keys(shotDets).forEach(function (k) {
+      byImage[String(shotDets[k].image)] = k;
+    });
+    var touchedCur = false;
+    Object.keys(map).forEach(function (imgId) {
+      var k = byImage[imgId];
+      if (!k) return;                       // 이 화면에 없는 판이면 그만이다
+      var labelMap = map[imgId];
+      var raw = shotDets[k] || {};
+      var st = shotState[k];                // 없으면 아직 안 연 판이다
+      Object.keys(labelMap).forEach(function (mk) {
+        var cls = labelMap[mk];
+        applyCls(raw.labels || (raw.labels = {}),
+                 (raw.candidates || []).concat(raw.gone || []), mk, cls);
+        if (st) applyCls(st.labels, st.cands, mk, cls);
+        if (k === curKey) touchedCur = true;
+      });
+    });
+    if (touchedCur) build();                // 지금 보는 판이면 그 자리에서 놓인다
+  }
+
+  // 그린 마스크가 같은 시야의 다른 판에 복제됐다 — 그 판들의 상태에 얹는다
+  // (106 2단계). `spreadLabels` 와 같은 모양이고 **이쪽이 더 급하다**: 저쪽은
+  // 분류가 옛 값으로 되돌아가는 것이고, 이쪽은 **마스크가 통째로 사라지는
+  // 것**이다. 다른 판의 화면은 열릴 때 받은 상태를 들고 있어 복제를 모르는데,
+  // 뷰어는 늘 전체를 보내므로 그 판에서 저장 한 번이 나가면 서버가 "표시가
+  // 사라진 그린 개체" 로 보고 지운다.
+  function spreadDrawn(map) {
+    if (!map || !shotDets) return;
+    var byImage = {};
+    Object.keys(shotDets).forEach(function (k) {
+      byImage[String(shotDets[k].image)] = k;
+    });
+    var touchedCur = false;
+    Object.keys(map).forEach(function (imgId) {
+      var k = byImage[imgId];
+      if (!k) return;                       // 이 화면에 없는 판이면 그만이다
+      var raw = shotDets[k] || {};
+      var st = shotState[k];                // 없으면 아직 안 연 판이다
+      map[imgId].forEach(function (d) {
+        addDrawn(raw.candidates || (raw.candidates = []), d);
+        if (st) addDrawn(st.cands, d);
+        if (k === curKey) touchedCur = true;
+      });
+    });
+    if (touchedCur) { build(); redraw(); }  // 지금 보는 판이면 그 자리에서 놓인다
+  }
+
+  // **검출 마스크를 다른 판에도 앉힌다** (DiaRUGA P19). 화면 쪽 절반이다.
+  //
+  // 서버가 복제본을 만들고 묶어 준 뒤 `spread` 로 돌려주면, 그것을 **자기 상태에
+  // 얹는다**(`spreadDrawn`). 안 얹으면 그 판으로 넘어가 저장하는 순간 `/review`
+  // 가 "표시가 사라진 그린 개체" 로 보고 지운다 — 111 이 이미 당한 자리다.
+  //
+  // **되돌리기가 다른 판을 모른다** (DiaRUGA P19 4.4). `Ctrl+Z` 는 지금 판의 편집
+  // 이력만 되돌리는데 앉히기는 다른 판에 행을 만든다. 그 비대칭을 띠에 적는다.
+  function spreadOne(idx) {
+    closeMenu();
+    var c = cands[idx];
+    if (!c || readOnly) return;
+    var key = keyOf(c);
+    var n = spreadTargets(key).length;
+    if (!n) return;
+
+    // **지연 저장보다 늦게 보낸다** (DiaRUGA P19 4.5 · 묶기와 같은 문). 400ms 지연
+    // 저장에 실린 것을 서버가 아직 모르면 앉히기가 헛돈다.
+    (flushSave() || Promise.resolve()).then(function () {
+      if (savePending) {
+        throw new Error('앞선 교정이 저장되지 않았습니다 — 그 상태로 앉히면 ' +
+                        '한쪽만 남습니다. 저장 오류를 먼저 볼 것');
+      }
+      return env.send('spread', location.pathname.replace(/\/?$/, '/') + 'spread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: curImage === '' ? null : Number(curImage),
+                               mask_key: key })
+      });
+    }).then(function (r) {
+      return r.json().then(function (j) { return { s: r.status, j: j }; });
+    }).then(function (r) {
+      if (!r.j.ok) {
+        saveFailed(true, (r.j.error || ('앉히기 실패 (' + r.s + ')')) +
+                   ' — 앉히지 않았습니다');
+        return;
+      }
+      saveFailed(false);
+      spreadDrawn(r.j.spread);
+      links = r.j.links || [];
+      build(); redraw();
+      flashDrawnLinked(r.j.spread);
+      spreadSaid(r.j.n);
+    }).catch(function (e) {
+      saveFailed(true, (e && e.message) || '서버에 닿지 못했습니다');
+    });
+  }
+
+  // 띠는 한 줄이면 된다 (DiaRUGA P19 4.3). **되돌리는 길의 비대칭을 함께 적는다** —
+  // 풀기는 묶음만 풀고 복제본은 남으므로, 그것을 모르면 "풀었는데 왜 마스크가
+  // 남아 있나" 가 된다.
+  function spreadSaid(n) {
+    var el = document.createElement('div');
+    el.className = 'errbar spreadok';
+    el.textContent = '판 ' + n + '곳에 앉혔습니다 — 되돌리려면 묶음을 풀고 ' +
+                     '판마다 지웁니다 (Ctrl+Z 는 이 판만 되돌립니다)';
+    var bar = saveState ? saveState.parentNode : null;
+    if (bar && bar.parentNode) bar.parentNode.insertBefore(el, bar.nextSibling);
+    else view.parentNode.insertBefore(el, view);
+    setTimeout(function () { el.remove(); }, 6000);
+  }
+
+  // 방금 그려서 묶인 마스크를 잠깐 밝힌다 (사용자, 2026-08-12).
+  //
+  // **구분을 배지 색으로 하지 않는다.** 사슬은 컬러 이모지라 `color` 가 안 먹고
+  // (`base.html` 의 그 주석), 색을 정하려면 SVG 로 따라 그려야 하는데 그 크기에서
+  // 사슬로 안 읽혔다. 무엇보다 **영구 표시는 뜻을 정하기 어렵다** — 사람이 그린
+  // 마스크와 엔진 마스크를 손으로 섞어 묶는 길이 열려 있어, 그 묶음이 무슨
+  // 색인지를 답해야 한다.
+  //
+  // 물어야 하는 것은 하나다: **"방금 내가 그린 것이 묶였는가."** 그것은 지금
+  // 일어난 일이라 **잠깐 보이면 된다.** 판을 넘어온 묶음의 짝을 밝히는
+  // `flashFollowed` 와 같은 자리이고 같은 `linkflash` 를 쓴다 — 뜻이 같은 것을
+  // 두 가지로 그리면 사람이 둘을 다른 일로 읽는다.
+  function flashDrawnLinked(map) {
+    if (!map) return;
+    var keys = {};
+    Object.keys(map).forEach(function (imgId) {
+      (map[imgId] || []).forEach(function (d) { keys[d.key] = 1; });
+    });
+    cands.forEach(function (c, i) {
+      if (!keys[keyOf(c)]) return;
+      var el = elByIdx[i];
+      if (!el) return;
+      el.classList.add('linkflash');
+      setTimeout(function () { el.classList.remove('linkflash'); }, 1400);
+    });
+  }
+
+  // 복제 하나를 그 판의 개체 목록에 넣는다. **이미 있으면 두 번 넣지 않는다** —
+  // 저장할 때마다 서버가 같은 것을 다시 실어 보내므로, 안 막으면 같은 마스크가
+  // 저장 횟수만큼 쌓이고 그 판에서 저장이 나가면 그대로 DB 로 간다.
+  //
+  // **그래도 분류는 갈아 끼운다.** 개체 하나에 사는 값이라 그린 판에서 고치면
+  // 이 판의 것도 바뀐 것인데, 있다고 그냥 물러나면 이 판의 화면은 옛 값을 들고
+  // 있다가 **다음 저장에서 그것을 도로 써 넣는다.** 기하는 안 건드린다:
+  // 경계 고치기는 판마다 하는 일이다.
+  function addDrawn(list, d) {
+    if (!list || !d || !d.key) return;
+    for (var i = 0; i < list.length; i++) {
+      if (keyOf(list[i]) !== d.key) continue;
+      list[i].cls = d.cls || null;
+      return;
+    }
+    var g = d.geom || {};
+    var b = g.bbox || [0, 0, 1, 1];
+    // **그리기가 만드는 것과 같은 모양이어야 한다** — `source: 'manual'` 이라야
+    // `isManual` 갈래를 타서 `drawn` 으로 실려 나가고, 엔진 개체의 `labels`·
+    // `labels` 지도에 섞이지 않는다.
+    list.push({
+      key: d.key, source: 'manual', orphan: true,
+      polygon: g.polygon || [],
+      bbox_xywh: b,
+      center_xy: [b[0] + Math.floor(b[2] / 2), b[1] + Math.floor(b[3] / 2)],
+      cls: d.cls || null
+    });
+  }
+
+  // 분류 하나를 얹는다 — `setLabel` 과 **같은 규칙**이어야 한다(자동 판정은
+  // `cls_auto` 에 남기고 사람의 지정을 위에 얹는다). 규칙이 둘이면 번진 분류만
+  // 되돌리기·색이 다르게 군다.
+  //
+  // **손그림 키는 지도에 안 싣는다.** 그 개체의 분류는 `drawn` 이 통째로
+  // 나르는데, 지도에도 실으면 서버가 같은 키로 **엔진 쪽 행을 하나 더 만든다**
+  // (`batch` 가 달라 유일 제약에 안 걸린다 — `detection_for` 의 그 주석).
+  // 그 대신 개체에는 적는다: 안 적으면 이 판의 다음 저장이 빈 값을 보낸다.
+  function applyCls(labelMap, list, mk, cls) {
+    var manual = isManualKey(list, mk);
+    if (!manual) { if (cls) labelMap[mk] = cls; else delete labelMap[mk]; }
+    list.forEach(function (c) {
+      if (keyOf(c) !== mk) return;
+      // **접은 표시를 걷는다** — 여기서 앉는 값은 개체의 유형이라 저장에
+      // 실려야 한다(`fold_object_cls` 가 붙인 것은 화면 색일 뿐이다).
+      delete c.cls_folded;
+      if (isManual(c)) { c.cls = cls || null; return; }
+      if (cls) {
+        if (c.cls_auto === undefined) c.cls_auto = c.cls || null;
+        c.cls = cls;
+        c.cls_user = true;
+      } else {
+        if (c.cls_auto !== undefined) c.cls = c.cls_auto;
+        c.cls_user = false;
+      }
+    });
+  }
+
+  function isManualKey(list, mk) {
+    for (var i = 0; i < list.length; i++) {
+      if (keyOf(list[i]) === mk) return isManual(list[i]);
+    }
+    return false;
+  }
+
+  function save() {
+    // 읽기 전용이면 타이머조차 걸지 않는다. `postReview` 도 다시 막지만, 저장
+    // 대기 상태가 서면 화면이 "저장 중" 인 것처럼 굴고 `flushSave` 가 떠날 때
+    // 또 부른다 — 보내지 않을 것을 예약해 둘 이유가 없다.
+    if (readOnly) return;
+    // **지나가는 판에는 저장하지 않는다** (DiaRUGA 074). 커서가 캐러셀의 옆 판을 스치면
+    // 전역이 그 판의 개체를 들고 있는데 저장 대상(`curImage`)은 고른 판 그대로다
+    // — 그대로 보내면 **본 적 없는 이미지에 옆 판의 판단이 앉는다.** 눌린 키는
+    // 버리고 화면을 고른 판으로 되돌린다: 아무 일도 안 일어난 것으로 보여야 한다.
+    if (previewing) { unpreviewState(); build(); redraw(); return; }
+    savePending = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { postReview(false); }, 400);
+  }
+
+  // 지연 저장이 걸려 있는 채로 시야를 옮기면 그 교정이 사라진다. 떠나기 전에 밀어낸다.
+  function flushSave(leaving) {
+    if (!savePending) return Promise.resolve();
+    clearTimeout(saveTimer);
+    // **약속을 돌려준다** — 묶기(DiaRUGA P11)가 이 저장 뒤에 서야 한다. 지연 저장이
+    // 나가기 전에 묶기 POST 가 먼저 닿으면, 방금 그린 마스크를 서버가 몰라
+    // "이 화면의 마스크가 아니다" 로 거절한다 (실사용에서 났다).
+    //
+    // **keepalive 는 정말 떠날 때(leaving)만.** 페이지가 남는 자리(판 넘기기·
+    // 묶기 팝업)에서 쓰면 이득이 없다. 떠날 때도 **본문이 작을 때만** 붙는다 —
+    // 64 KiB 를 넘으면 브라우저가 보내 보지도 않고 거절하기 때문이고, 그
+    // 판단은 `postReview` 가 크기를 재서 한다(`KEEPALIVE_MAX`).
+    return postReview(!!leaving);
+  }
+
+  // --- 분류 직접 지정 -------------------------------------------------------
+  // 조각난 개체이 봉상/원형으로 잘못 분류되는 것을 손으로 고친다. 자동 판정은
+  // cls_auto 로 남겨 두고 사람의 지정을 위에 얹는다.
+  function setLabel(idxs, cls) {
+    var touched = [];
+    idxs.forEach(function (i) {
+      var c = cands[i];
+      if (!c) return;
+      var key = keyOf(c);
+      touched.push({ i: i, key: key, cls: c.cls, manual: isManual(c),
+                     user: !!c.cls_user, auto: c.cls_auto,
+                     folded: !!c.cls_folded });
+      // 사람이 지정하는 자리다 — 접은 표시를 걷는다(`applyCls` 와 같은 규칙).
+      delete c.cls_folded;
+      if (cls) {
+        if (c.cls_auto === undefined) c.cls_auto = c.cls || null;
+        if (!isManual(c)) labels[key] = cls;
+        c.cls = cls;
+        c.cls_user = true;
+      } else {
+        if (!isManual(c)) delete labels[key];
+        if (c.cls_auto !== undefined) c.cls = c.cls_auto;
+        c.cls_user = false;
+      }
+    });
+    if (!touched.length) return;
+    history.push({ type: 'label', items: touched });
+    build();
+    save();
+  }
+
+  // --- 분류 단축키 ----------------------------------------------------------
+  // 개체를 고르고 키를 누르면 그 분류가 된다. 우클릭 메뉴로 같은 일을 할 수
+  // 있지만, 시야 하나에 개체가 수십이라 메뉴를 여닫는 왕복이 곧 검토 속도다.
+  //
+  // **같은 키를 나눠 가진 분류는 누를 때마다 돈다** (원형 → 원형 파편 → 원형).
+  // 손가락을 옮기지 않고 누른 횟수로 온전한 것과 깨진 것을 가른다 — 색을
+  // 그렇게 묶었으니(DiaRUGA 039) 조작도 같은 모양이어야 한다.
+  //
+  // 키 배정은 ClassDef.hotkey 다. 여기에 목록을 적지 않는다 — 분류를 더하면서
+  // 이 자리만 옛 목록으로 남는 일이 이미 두 번 있었다.
+  var HOTKEYS = {};
+  CLASS_DEFS.forEach(function (d) {
+    var h = (d.hotkey || '').toLowerCase();
+    if (!h) return;
+    (HOTKEYS[h] = HOTKEYS[h] || []).push(d);
+  });
+
+  var keyhint = document.getElementById('keyhint-' + uid);
+  // 읽기 전용(`?batch=`)에서는 키가 안 듣는다. 안내가 남아 있으면 눌러
+  // 보고 "안 되네" 가 된다 — 있는 기능인 줄 알고 헤매는 쪽이 더 나쁘다.
+  if (keyhint && readOnly) keyhint.hidden = true;
+
+  document.addEventListener('keydown', function (e) {
+    if (readOnly) return;
+    // Ctrl/⌘/Alt 조합은 다른 것들이 쓴다 (Ctrl+Z, Ctrl+화살표)
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (window.__diarugaActive !== uid) return;
+    if (ask) return;                    // 확인 창이 떠 있으면 그쪽이 먼저다
+    var t = document.activeElement;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+
+    // **그리는 중에는 그리기가 먼저다** (DiaRUGA P09 3단계). 분류 단축키가 여기 있는데,
+    // 그리다가 `q` 를 누르면 아직 만들지도 않은 개체에 분류를 지정하려 든다.
+    if (editing) {
+      if (e.key === 'Enter') { e.preventDefault(); editFinish(); }
+      else if (e.key === 'Escape') { e.preventDefault(); editCancel(); }
+      return;
+    }
+    if (drawing) {
+      if (e.key === 'Enter') { e.preventDefault(); drawFinish(); }
+      else if (e.key === 'Escape') { e.preventDefault(); drawCancel(); }
+      else if (e.key === 'Backspace') {
+        // **그리는 중의 무르기는 `history` 와 따로다.** 그리다 만 것과 저장된
+        // 교정은 다른 층이라, 섞으면 Ctrl+Z 가 어느 쪽을 되돌리는지 모호해진다.
+        e.preventDefault();
+        drawing.pts.pop();
+        drawRender(); drawStatus();
+      }
+      return;
+    }
+    if (e.key === 'd') { e.preventDefault(); drawStart(); return; }
+
+    var ring = HOTKEYS[(e.key || '').toLowerCase()];
+    if (!ring || !ring.length) return;
+
+    // 지운 개체는 뺀다 — 우클릭 메뉴의 live 와 같은 규칙이어야 한다.
+    var live = Array.from(sel).filter(function (i) {
+      return cands[i] && !removed.has(keyOf(cands[i]));
+    });
+    e.preventDefault();
+    if (!live.length) {
+      saveState.textContent = '개체를 먼저 고르세요 (클릭 · 드래그 범위 선택)';
+      return;
+    }
+    // 고른 것이 **전부** 지금 ring[n] 이면 다음 것으로 넘어간다. 섞여 있으면
+    // 처음 것으로 모은다 — 여럿을 고른 채 눌렀을 때 결과가 한 가지여야 한다.
+    var at = -1;
+    for (var n = 0; n < ring.length; n++) {
+      var all = live.every(function (i) { return cands[i].cls === ring[n].key; });
+      if (all) { at = n; break; }
+    }
+    var next = ring[(at + 1) % ring.length];
+    setLabel(live, next.key);
+    saveState.textContent = next.label + ' 로 지정 — ' + live.length + '개';
+  });
+
+  // --- 오검출 삭제 단축키 (스페이스) ----------------------------------------
+  // **가장 많이 하는 조작이다** — 교정 6,753건 중 삭제가 5,467이다. 분류에는
+  // 040 에서 키를 줬는데 삭제만 우클릭 메뉴로 남아 있었다. 메뉴를 여닫는 왕복이
+  // 곧 검토 속도다.
+  //
+  // 분류 키가 도는 것과 같은 모양이다 — 고른 것에 누르면 지우고, 지운 것에
+  // 다시 누르면 되살린다.
+  //
+  // **ClassDef.hotkey 에 못 태운다.** 오검출은 분류가 아니라 removed 집합이고,
+  // data.hotkey_groups() 가 .strip() 을 걸어 공백은 빈 값으로 사라진다.
+  // 그래서 위의 분류 갈래와 나눠 여기 따로 둔다.
+  document.addEventListener('keydown', function (e) {
+    if (readOnly) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (window.__diarugaActive !== uid) return;
+    if (ask) return;
+    // **e.key 는 'Space' 가 아니라 ' ' 다** (e.code 쪽이 'Space').
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    var t = document.activeElement;
+    // **BUTTON 을 함께 거른다.** 분류 키와 달리 스페이스는 초점이 놓인 버튼을
+    // 누른다 — 저장·초기화 버튼 위에서 눌리면 곤란하다. 여기서 돌려보내
+    // 브라우저가 제 일(버튼 누르기)을 하게 둔다.
+    if (t && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName)) return;
+
+    var targets = Array.from(sel);
+    var live = targets.filter(function (i) {
+      return cands[i] && !removed.has(keyOf(cands[i]));
+    });
+    var dead = targets.filter(function (i) {
+      return cands[i] && removed.has(keyOf(cands[i]));
+    });
+    // **스크롤을 막는다.** 위의 분류 갈래는 HOTKEYS 에 걸린 키에만
+    // preventDefault 를 부르는데, 스페이스는 브라우저가 스크롤에 쓴다 —
+    // 안 막으면 지우면서 화면이 뛴다.
+    e.preventDefault();
+    if (!live.length && !dead.length) {
+      saveState.textContent = '개체를 먼저 고르세요 (클릭 · 드래그 범위 선택)';
+      return;
+    }
+    // 산 것이 하나라도 섞여 있으면 지운다 — 여럿을 고른 채 눌렀을 때 결과가
+    // 한 가지여야 한다(분류 키와 같은 규칙). 되살리기는 고른 것이 **전부**
+    // 지워진 것일 때만이다.
+    if (live.length) {
+      removeKeys(live);          // sel 을 비우고 build·save 까지 한다
+      saveState.textContent = '오검출로 삭제 — ' + live.length + '개';
+      return;
+    }
+    var keys = dead.map(function (i) { return keyOf(cands[i]); });
+    restore(keys);
+    history.push({ type: 'restore', keys: keys });
+    build(); save();
+    saveState.textContent = '되살림 — ' + keys.length + '개';
+  });
+
+  // --- 개체 카탈로그 칸 (DiaRUGA 183) -----------------------------------------------
+  //
+  // **고른 개체 하나의 카드**를 오른쪽 칸에 그린다. 여기 있던 「이 시야」 메모
+  // 상자는 걷었다(사용자 2026-09-04) — 570 시야에 6건이었고, 검토하며 손이 가는
+  // 것은 지금 보는 개체의 동정이다. **DB 의 기록과 서버의 문은 그대로 둔다** —
+  // 지우는 것은 화면뿐이다.
+  //
+  // **하나만 골랐을 때만 뜬다.** 여럿을 골라 놓고 적으면 어느 개체에 적히는지가
+  // 화면에서 안 갈린다 — 여럿에 같은 값을 넣는 일은 카탈로그 화면의 일괄 편집이
+  // 한다(DiaRUGA P16 5.2).
+  //
+  // **읽기 전용에서는 칸이 잠긴다** (DiaRUGA 051). 저장만 막으면 사람이 적어 놓고
+  // 저장된 줄 안다 — 반응하는 자리를 전부 잠근다.
+  var catBox = document.getElementById('catbox-' + uid);
+  var catHintEl = document.getElementById('catsay-' + uid);
+  var catNoEl = document.getElementById('catno-' + uid);
+  var catSpEl = document.getElementById('catsp-' + uid);
+  var catClsEl = document.getElementById('catcls-' + uid);
+  var catGpEl = document.getElementById('catgp-' + uid);
+  var catGradeEl = document.getElementById('catgrade-' + uid);
+  var catPoseEl = document.getElementById('catpose-' + uid);
+  var catNoteEl = document.getElementById('catnote-' + uid);
+  var catMetaEl = document.getElementById('catmeta-' + uid);
+  var catStateEl = document.getElementById('catstate-' + uid);
+  // 지금 칸이 그린 개체의 키. **적는 중에 다시 그리면 방금 친 글자가 사라진다**
+  // — 같은 개체를 그대로 보고 있고 칸에 초점이 있으면 손대지 않는다.
+  var catKey = null;
+
+  // --- 학명 자동완성 (ForGIA) ------------------------------------------------
+  // `<datalist>` 는 서버가 내려준 **켠 학명**으로 시작한다(`species_seen`). 거기
+  // 없는 이름을 치면 `/api/taxon/suggest` 가 WoRMS 반입 전체에서 찾아 목록을
+  // 갈아 끼운다 — 쓰이는 순간 켜지므로(`resolve_taxon`) 다음부터는 처음
+  // 목록에 든다. 세 글자부터 묻고, 치는 속도보다 느리게 묻는다.
+  var taxonTimer = null, taxonSeq = 0;
+  function taxonSuggest(inputEl, listId) {
+    var q = (inputEl.value || '').trim();
+    clearTimeout(taxonTimer);
+    if (q.length < 3) return;
+    taxonTimer = setTimeout(function () {
+      var my = ++taxonSeq;
+      fetch(ROOT + '/api/taxon/suggest?q=' + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (my !== taxonSeq || !d || !d.names) return;
+          var dl = document.getElementById(listId);
+          if (!dl) return;
+          dl.textContent = '';
+          d.names.forEach(function (n) {
+            var o = document.createElement('option');
+            o.value = n.name;
+            if (n.valid && n.valid !== n.name) o.label = n.name + ' → ' + n.valid;
+            dl.appendChild(o);
+          });
+        }).catch(function () {});
+    }, 180);
+  }
+
+  function catSay(msg, warn) {
+    if (!catStateEl) return;
+    catStateEl.textContent = msg || '';
+    catStateEl.className = 'catstate' + (warn ? ' warn' : '');
+  }
+
+  // 유형 목록은 **화면이 이미 아는 것**으로 짠다 (`CLASS_DEFS`). 템플릿에서 한
+  // 번 더 돌면 분류를 더할 때 고칠 자리가 둘이 되고, 038 이 그렇게 한 곳만 옛
+  // 목록으로 남은 자리다.
+  if (catClsEl) {
+    CLASS_DEFS.forEach(function (d) {
+      var o = document.createElement('option');
+      o.value = d.key;
+      o.textContent = d.label;
+      catClsEl.appendChild(o);
+    });
+  }
+
+  function catDef(key) {
+    for (var i = 0; i < CLASS_DEFS.length; i++)
+      if (CLASS_DEFS[i].key === key) return CLASS_DEFS[i];
+    return null;
+  }
+
+  // 지금 칸이 볼 개체 — 하나만 골랐을 때만이다.
+  function catPick() {
+    if (sel.size !== 1) return null;
+    var i = Array.from(sel)[0];
+    return cands[i] || null;
+  }
+
+  function catFields() {
+    return {
+      species: catSpEl ? catSpEl.value.trim() : '',
+      grade: catGradeEl && !catGpEl.hidden ? catGradeEl.value : '',
+      pose: catPoseEl && !catGpEl.hidden ? catPoseEl.value : '',
+      note: catNoteEl ? catNoteEl.value.trim() : ''
+    };
+  }
+
+  // 번호 줄. **번호는 판정 하나의 이름이라** 이 개체의 다른 판 것일 수 있다 —
+  // 그때는 어느 판 기준인지 함께 적는다(카탈로그 카드와 같은 규칙 · P18).
+  function catPaintNo(c) {
+    if (!catNoEl) return;
+    catNoEl.textContent = '';
+    if (!c.obj_id) {
+      catNoEl.className = 'catno none';
+      catNoEl.textContent = '아직 카드가 없습니다 — 여기 적으면 생깁니다';
+      return;
+    }
+    if (!c.catalog_no) {
+      catNoEl.className = 'catno none';
+      catNoEl.textContent = '번호 없음 — ' + (c.catalog_why || '재료가 모자랍니다');
+      return;
+    }
+    catNoEl.className = 'catno';
+    var v = document.createElement('span');
+    v.className = 'v';
+    v.textContent = c.catalog_no;
+    catNoEl.appendChild(v);
+    if (c.no_here === false) {
+      var from = document.createElement('span');
+      from.className = 'nofrom';
+      from.title = '번호는 판정 하나의 이름입니다 — 이 개체의 다른 판 번호로도 찾을 수 있습니다';
+      from.textContent = (c.no_from === null || c.no_from === undefined)
+        ? '합성본 기준' : ('프레임 ' + c.no_from + ' 기준');
+      catNoEl.appendChild(from);
+    }
+  }
+
+  // 아래 줄 — 크기·판·묶음, 그리고 카드로 가는 길.
+  function catPaintMeta(c, key) {
+    if (!catMetaEl) return;
+    catMetaEl.textContent = '';
+    function chip(text, title) {
+      var e = document.createElement('span');
+      e.textContent = text;
+      if (title) e.title = title;
+      catMetaEl.appendChild(e);
+    }
+    if (c.major_um) chip((+c.major_um).toFixed(1) + ' µm');
+    if (c.linked_n > 1) chip('묶음 ' + c.linked_n,
+                             '같은 개체로 묶인 판 ' + c.linked_n + '장이 이 값을 나눠 갖습니다');
+    if (c.is_rep) chip('대표', '이 개체를 가장 잘 보여주는 판입니다 (카탈로그의 그림)');
+    if (removed.has(key)) chip('지운 개체', 'Space 로 되살립니다');
+    // **떠나기 전에 밀어낸다** — 적다 말고 누르는 일이 잦은 자리다(카탈로그
+    // 카드의 그 주석과 같은 이야기). `leave` 가 못 나간 저장을 마저 보낸다.
+    //
+    // **주소가 없으면 안 놓는다** (DiaRUGA P25). 오프라인 파일에는 갈 카탈로그 화면이
+    // 없다 — 눌러도 아무 일도 안 일어나는 링크를 남기지 않는다.
+    if (!CATALOG_URL) return;
+    var a = document.createElement('a');
+    a.className = 'tocard';
+    a.href = CATALOG_URL + '?obj=' + encodeURIComponent(key) +
+             '&img=' + encodeURIComponent(curImage || '');
+    a.textContent = '카드로 →';
+    a.title = '이 개체의 카탈로그 카드를 엽니다 (화면을 떠납니다)';
+    a.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      leave(a.getAttribute('href'));
+    });
+    catMetaEl.appendChild(a);
+  }
+
+  // **적는 중인 칸만 비켜 간다.** 화면 전체를 안 그리면 저장 응답이 온 뒤에도
+  // 옛 번호가 남고(카드가 방금 생겼는데 "없습니다" 라고 적는다), 통째로 그리면
+  // 방금 친 글자가 사라진다 — 갈래는 칸 하나 단위다.
+  function catSet(el, value) {
+    if (el && el !== document.activeElement) el.value = value;
+  }
+
+  function catFill() {
+    if (!catBox) return;
+    var c = catPick();
+    var key = c ? keyOf(c) : null;
+    if (key !== catKey) catSay('');
+    catKey = key;
+    if (!c) {
+      catBox.hidden = true;
+      if (catHintEl) {
+        catHintEl.hidden = false;
+        catHintEl.textContent = sel.size > 1
+          ? '개체를 하나만 골라야 카드가 뜹니다'
+          : '개체를 하나 고르면 카드가 뜹니다';
+      }
+      return;
+    }
+    catBox.hidden = false;
+    if (catHintEl) catHintEl.hidden = true;
+
+    catPaintNo(c);
+    catSet(catSpEl, c.species || '');
+    catSet(catClsEl, c.cls || '');
+    catSet(catGradeEl, c.grade || '');
+    catSet(catPoseEl, c.pose || '');
+    catSet(catNoteEl, c.note || '');
+    // **등급·자세는 완형에만 매긴다** — 파편이면 두 칸이 아예 없다.
+    var def = catDef(c.cls);
+    if (catGpEl) catGpEl.hidden = !!(c.cls && def && !def.counted);
+    catPaintMeta(c, key);
+
+    // 지운 개체는 읽기만 한다 — 되살리기 전에 동정하는 것은 순서가 뒤집힌 일이다.
+    var lock = readOnly || removed.has(key);
+    [catSpEl, catClsEl, catGradeEl, catPoseEl, catNoteEl].forEach(function (el) {
+      if (el) el.disabled = lock;
+    });
+    if (readOnly) catSay('읽기 전용입니다 — 동정은 현재 검출에서 적습니다');
+    else if (removed.has(key)) catSay('지운 개체입니다 — Space 로 되살린 뒤 적습니다');
+  }
+
+  // 칸을 만졌다 — 유형만 이 화면의 문으로, 나머지는 카탈로그의 문으로 간다.
+  function catTouched(fromCls) {
+    var c = catPick();
+    if (!c || readOnly || removed.has(keyOf(c))) return;
+    if (fromCls) {
+      // **유형은 `setLabel` 이다** (DiaRUGA 104). `labels` 는 판 payload 가 통째로
+      // 보내는 것이라 다른 문으로 적으면 다음 저장이 그것을 지운다. 실행취소도
+      // 단축키와 같은 길로 이어진다.
+      var i = Array.from(sel)[0];
+      setLabel([i], catClsEl.value || '');
+      catFill();
+      catSay(catClsEl.value ? '유형을 지정했습니다' : '유형을 비웠습니다');
+      return;
+    }
+    saveCat(keyOf(c), catFields());
+  }
+
+  if (catBox) {
+    // **종명은 `change` 에만 저장한다** (ForGIA). 서버가 `Taxon` 표에 없는 이름을
+    // 거절하므로(`resolve_taxon`) 글자마다 보내면 치는 동안 내내 "없는 학명"
+    // 이 뜬다 — 다 치고 칸을 떠나거나 목록에서 고른 값만 보낸다. 코멘트는
+    // 자유 글이라 DiaRUGA 대로 치는 대로 흐른다.
+    if (catNoteEl) catNoteEl.addEventListener('input', function () { catTouched(false); });
+    if (catSpEl) {
+      catSpEl.addEventListener('change', function () { catTouched(false); });
+      catSpEl.addEventListener('input', function () { taxonSuggest(catSpEl, 'catspecies-' + uid); });
+    }
+    [catGradeEl, catPoseEl].forEach(function (el) {
+      if (el) el.addEventListener('change', function () { catTouched(false); });
+    });
+    if (catClsEl) catClsEl.addEventListener('change', function () { catTouched(true); });
+    if (catNoteEl) {
+      catNoteEl.addEventListener('keydown', function (ev) {
+        // Esc·Ctrl+Enter 로 칸에서 빠져나온다 (저장은 이미 흐르고 있다).
+        if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
+          ev.preventDefault();
+          catNoteEl.blur();
+        }
+      });
+    }
+    // 캔버스가 이 안의 클릭·휠을 확대·선택으로 받으면 안 된다.
+    ['wheel', 'mousedown', 'contextmenu'].forEach(function (ev) {
+      catBox.addEventListener(ev, function (x) { x.stopPropagation(); });
+    });
+  }
+
+  // --- 탈락 후보 펼쳐 보기 (누락 복구) --------------------------------------
+  var spread = null;
+  function closeSpread() { if (spread) { spread.remove(); spread = null; } }
+
+  // 지금 보고 있는 사진의 실제 경로. 캐러셀에서 원본 프레임으로 바꿔 놨으면
+  // 그쪽에서 잘라야 하므로 썸네일 URL 의 p= 를 그대로 꺼내 쓴다.
+  function currentImageRel() {
+    var m = /[?&]p=([^&]*)/.exec(committedSrc || '');
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+  }
+
+  // 크롭 + 마스크. 종횡비를 지킨다 — 배경 트릭으로 칸을 채우면 납작한 봉상이
+  // 9배까지 늘어나(실측 종횡비 0.15~7.2) 형태를 보고 판단할 수가 없다.
+  var SPREAD_MAX_W = 220, SPREAD_MAX_H = 170;
+
+  function cropWithMask(c, relOverride) {
+    var b = c.bbox_xywh;
+    // 여백을 직접 계산해 서버에 pad=0 으로 넘긴다. 잘린 범위를 알아야
+    // 폴리곤을 그 위에 정확히 얹을 수 있다.
+    var pad = Math.max(4, Math.round(0.12 * Math.max(b[2], b[3])));
+    var x0 = Math.max(0, b[0] - pad), y0 = Math.max(0, b[1] - pad);
+    var x1 = Math.min(W, b[0] + b[2] + pad), y1 = Math.min(H, b[1] + b[3] + pad);
+    var cw = Math.max(1, x1 - x0), ch = Math.max(1, y1 - y0);
+
+    var s = Math.min(SPREAD_MAX_W / cw, SPREAD_MAX_H / ch);
+    var dw = Math.max(28, Math.round(cw * s)), dh = Math.max(28, Math.round(ch * s));
+
+    var wrap = document.createElement('span');
+    wrap.className = 'scrop';
+    wrap.style.width = dw + 'px';
+    wrap.style.height = dh + 'px';
+
+    // 화면에 필요한 만큼만 받는다(고밀도 화면을 감안해 2배, 서버가 512 로 제한).
+    var req = Math.min(512, 2 * Math.max(dw, dh));
+    var im = env.cropImg(uid, relOverride || currentImageRel(),
+                         [x0, y0, cw, ch], req);
+    im.alt = '';
+    wrap.appendChild(im);
+
+    // 마스크 — viewBox 를 잘라 낸 범위로 잡으면 좌표 변환이 필요 없다.
+    if (hasPoly(c)) {
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', x0 + ' ' + y0 + ' ' + cw + ' ' + ch);
+      svg.setAttribute('preserveAspectRatio', 'none');
+      var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      var pts = [];
+      for (var j = 0; j < c.polygon.length; j += 2) {
+        pts.push(c.polygon[j] + ',' + c.polygon[j + 1]);
+      }
+      poly.setAttribute('points', pts.join(' '));
+      svg.appendChild(poly);
+      wrap.appendChild(svg);
+    }
+    return wrap;
+  }
+
+  function openSpread(e, pt) {
+    closeSpread();
+    // 클릭 지점을 품고 있는 탈락 후보들. 없으면 조용히 넘어간다.
+    var hits = rejectsAt(pt);
+    if (!hits.length) return false;
+    hits.sort(function (a, b) { return a.area_px - b.area_px; });
+    hits = hits.slice(0, 12);
+
+    spread = document.createElement('div');
+    spread.className = 'spread';
+    // 읽기 전용에서는 **볼 수만 있다.** 고르면 그 자리에서 검출로 올라가는데
+    // (`accepted` 에 넣고 `cands` 에 밀어 넣는다) 저장이 안 나가므로 새로고침
+    // 한 번에 사라진다. 머리말부터 그렇게 적는다 — 눌러 보고 알게 하지 않는다.
+    spread.innerHTML = '<div class="shead">이 자리를 <b>마스크가 덮는</b> 탈락 후보 ' +
+      hits.length + '개 — ' + (readOnly ? '<b>읽기 전용이라 볼 수만 있습니다</b>'
+                                        : '맞는 것을 고르면 검출로 인정된다') + '</div>';
+
+    // 닫기 — 바깥 클릭과 Esc 로도 닫히지만, 눌러서 닫을 곳이 보여야 한다.
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'sclose';
+    x.title = '닫기 (Esc)';
+    x.textContent = '✕';
+    x.addEventListener('click', function (ev) { ev.stopPropagation(); closeSpread(); });
+    spread.appendChild(x);
+
+    var grid = document.createElement('div');
+    grid.className = 'sgrid';
+    spread.appendChild(grid);
+
+    hits.forEach(function (c) {
+      var b = c.bbox_xywh;
+      var cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'scell';
+      cell.appendChild(cropWithMask(c));
+      var cap = document.createElement('span');
+      cap.className = 'scap';
+      cap.innerHTML = num(c.major_um, 1) + '×' + num(c.minor_um, 1) + ' µm<br>' +
+        '<span class="dim">' + (c.reject || '') + ' · 확신도 ' + num(c.predicted_iou, 2) + '</span>';
+      cell.appendChild(cap);
+      if (readOnly) {
+        // 누를 수 없게 만든다. 핸들러만 빼면 눌리는 것처럼 보인다.
+        cell.disabled = true;
+        grid.appendChild(cell);
+        return;
+      }
+      cell.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        accepted.add(keyOf(c));
+        var copy = Object.assign({}, c,
+          { manual: true, from_reject: true, id: cands.length });
+        cands.push(copy);
+        rejects = rejects.filter(function (r) { return keyOf(r) !== keyOf(c); });
+        history.push({ type: 'accept', key: keyOf(c) });
+        closeSpread();
+        build();
+        save();
+      });
+      grid.appendChild(cell);
+    });
+
+    document.body.appendChild(spread);
+    var w = spread.offsetWidth, h = spread.offsetHeight;
+    var x = Math.min(window.innerWidth - w - 8, Math.max(8, e.clientX - w / 2));
+    var y = e.clientY + 16;
+    if (y + h > window.innerHeight - 8) y = Math.max(8, e.clientY - h - 16);
+    spread.style.left = x + 'px';
+    spread.style.top = y + 'px';
+    return true;
+  }
+
+  document.addEventListener('mousedown', function (e) {
+    if (spread && !spread.contains(e.target)) closeSpread();
+  });
+
+  // --- 같은 개체 묶기 (DiaRUGA P11 2단계) -------------------------------------------
+  // 여러 초점면에 잡힌 같은 개체을 사람이 골라 묶는다. 후보 계산은 여기서
+  // 한다 — 화면이 프레임마다의 검출을 이미 들고 있다(shotDets·stateOf).
+  //
+  // **stateOf 를 쓰는 것이 요점이다** (사용자 지적 2026-08-09). 서버가 준 초기
+  // 상태(shotDets)가 아니라 **화면의 지금 상태**를 봐야 한다 — 방금 지운 마스크는
+  // 후보에서 빠지고, 방금 그린 마스크는 후보에 든다.
+  var links = [];
+  try {
+    var lkEl = document.getElementById('links-' + uid);
+    if (lkEl) links = JSON.parse(lkEl.textContent || '[]');
+  } catch (e2) { links = []; }
+
+  function linkOf(imageId, key) {
+    var iid = Number(imageId);
+    for (var i = 0; i < links.length; i++) {
+      var ms = links[i].members;
+      for (var j = 0; j < ms.length; j++)
+        if (ms[j].image === iid && ms[j].mask_key === key) return links[i];
+    }
+    return null;
+  }
+
+  // 묶기가 성립하는 화면인가 — 판이 둘 이상이어야 묶을 상대가 있다.
+  //
+  // **오프라인 파일에서는 성립하지 않는다** (DiaRUGA P25 3.3). 묶기는 서버가 개체를
+  // 세우고 대표를 다시 뽑는 일이라 기록으로 미룰 수 없다 — 저장을 막는 것으로
+  // 끝내지 않고 **메뉴에서 뺀다**: 화면에 있으면 사람이 누르고, 누르면 된 줄
+  // 안다(051 이 그 자리다).
+  function canLink() {
+    return !readOnly && !env.offline &&
+           shotDets && Object.keys(shotDets).length > 1;
+  }
+
+  // **앉힐 판이 몇 곳인가** (DiaRUGA P19). 검출이 있는 판에서 지금 판과 **이미 이 개체의
+  // 멤버가 있는 판**을 뺀 수다 — 서버가 거르는 것과 같은 규칙이라야 괄호 안의
+  // 수와 실제로 앉는 수가 안 어긋난다.
+  //
+  // **겹치는 검출은 안 센다** (사용자 방침 2026-08-25). 겹치면 묶는 게 나을지는
+  // 사람이 보고 정하는 자리이고, 화면이 세면 그 판단을 되묻는 꼴이 된다.
+  function spreadTargets(key) {
+    if (!canLink()) return [];
+    var lk = linkOf(curImage, key);
+    var taken = {};
+    if (lk) lk.members.forEach(function (m) { taken[String(m.image)] = 1; });
+    taken[String(curImage)] = 1;
+    return Object.keys(shotDets).filter(function (k) {
+      return !taken[String(shotDets[k].image)];
+    });
+  }
+
+  var linkPanel = null;
+  function closeLinkPanel() {
+    if (!linkPanel) return;
+    document.removeEventListener('keydown', linkPanel._key, true);
+    document.removeEventListener('mousedown', linkPanel._out, true);
+    linkPanel.remove(); linkPanel = null;
+  }
+
+  function bboxIoU(a, b) {
+    var ix = Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]));
+    var iy = Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]));
+    var inter = ix * iy;
+    return inter ? inter / (a[2] * a[3] + b[2] * b[3] - inter) : 0;
+  }
+
+  function openLinkPanel(idx) {
+    closeLinkPanel(); closeMenu(); closeSpread();
+    var anchor = cands[idx];
+    if (!anchor || !canLink()) return;
+    stash();                          // 지금 판의 편집 상태를 담아 둔다
+    var anchorKey = keyOf(anchor);
+    var ab = anchor.bbox_xywh;
+    var existing = linkOf(curImage, anchorKey);
+
+    // **지연 저장을 먼저 밀어내고, 그 약속을 들고 있는다.** 방금 그린 마스크는
+    // 400ms 지연 저장에 실려 있는데, 묶기 POST 가 그보다 먼저 닿으면 서버가
+    // 그 열쇠를 모른다. 여는 시점에 밀어내고 submit 이 이 약속 뒤에 온다.
+    var saveGate = flushSave() || Promise.resolve();
+
+    // 판 순서는 캐러셀 그대로 (합성본 → 프레임). 검출이 있는 판만.
+    var order = [];
+    shots.forEach(function (sh) {
+      var k = sh.dataset.detkey;
+      if (k && shotDets[k]) order.push({ key: k, title: sh.dataset.title || k });
+    });
+    var imageToKey = {};
+    order.forEach(function (o) {
+      imageToKey[String((shotDets[o.key] || {}).image)] = o.key;
+    });
+
+    // 선택 상태. picked[key] = 후보 dict | null("없음")
+    var picked = {}, repKey = curKey;
+    if (existing) {
+      existing.members.forEach(function (m) {
+        var k = imageToKey[String(m.image)];
+        if (!k) return;
+        var st = stateOf(k);
+        var c = st.cands.find(function (x) { return keyOf(x) === m.mask_key; });
+        if (c) { picked[k] = c; if (m.rep) repKey = k; }
+      });
+    }
+    picked[curKey] = anchor;          // 닻은 늘 들어 있다
+
+    // 닻 근처의 살아 있는 후보 — 지운 것은 빠지고 그린 것은 든다 (stateOf).
+    // 창은 닻 bbox 1.5배, 거리순 3개 (실측 090).
+    // **판마다 한 번만 계산해 기억한다** (102 고침). 탈락 후보는 표식을 붙인
+    // **사본**이라, 그릴 때마다 새로 만들면 고른 것(옛 사본)이 새 목록에 없다고
+    // 판단해 아래 `unshift` 가 **같은 것을 하나 더 붙였다** — 사용자가 본 그것이다.
+    //
+    // 팝업이 열려 있는 동안 상태는 안 바뀐다(고르기만 한다). 그러니 기억해 두면
+    // 객체가 그대로라 비교가 성립한다.
+    var nearCache = {};
+    function nearOf(key) {
+      if (nearCache[key]) return nearCache[key];
+      var st = stateOf(key);
+      var live = st.cands.filter(function (c) { return !st.removed.has(keyOf(c)); });
+      // **탈락 후보도 후보다** (102 · 사용자 요청). 그 프레임에서 가장 좋은
+      // 마스크가 문턱에서 떨어져 있는 일이 실제로 있다 — 초점이 흐려 텍스처가
+      // 모자란 판이 그렇다. 이미 되살린 것은 `cands` 에 있으므로 뺀다.
+      var seen = {};
+      live.forEach(function (c) { seen[keyOf(c)] = 1; });
+      st.rejects.forEach(function (c) {
+        if (seen[keyOf(c)]) return;
+        // 원본을 안 건드린다 — 표시용 표식만 붙인 사본이다
+        var copy = Object.assign({}, c);
+        copy._rej = true;
+        live.push(copy);
+      });
+      var mx = ab[2] * 0.25, my = ab[3] * 0.25;
+      var near = live.filter(function (c) {
+        var b = c.bbox_xywh;
+        var cx = b[0] + b[2] / 2, cy = b[1] + b[3] / 2;
+        return ab[0] - mx <= cx && cx <= ab[0] + ab[2] + mx &&
+               ab[1] - my <= cy && cy <= ab[1] + ab[3] + my;
+      });
+      function d2(c) {
+        var b = c.bbox_xywh;
+        var dx = (b[0] + b[2] / 2) - (ab[0] + ab[2] / 2);
+        var dy = (b[1] + b[3] / 2) - (ab[1] + ab[3] / 2);
+        return dx * dx + dy * dy;
+      }
+      near.sort(function (p, q) { return d2(p) - d2(q); });
+      nearCache[key] = near.slice(0, 3);
+      return nearCache[key];
+    }
+
+    // **미리 고르기는 열 때 한 번만 한다** (실측 090 · 사용자 승인): 최선
+    // IoU ≥ 0.5 이고 차선과의 간격 ≥ 0.3 일 때만. 헷갈리는 자리는 사람 손에
+    // 남긴다. render() 안에서 하면 **"(없음)" 으로 뺀 것을 다음 그리기가 도로
+    // 찍는다** — 브라우저 시험이 실제로 잡았다.
+    if (!existing) {
+      order.forEach(function (o) {
+        if (o.key === curKey || (o.key in picked)) return;
+        // **미리 고르기는 통과분만 집는다.** 탈락 후보를 자동으로 고르면
+        // 사람이 확인하지 않은 채 되살아난다 — 판정을 자동값에 맡기는 자리다.
+        var near = nearOf(o.key).filter(function (c) { return !c._rej; });
+        if (!near.length) return;
+        var ious = near.map(function (c) { return bboxIoU(ab, c.bbox_xywh); });
+        var bi = ious.indexOf(Math.max.apply(null, ious));
+        var second = Math.max.apply(null,
+          ious.filter(function (_, i) { return i !== bi; }).concat([0]));
+        if (ious[bi] >= 0.5 && ious[bi] - second >= 0.3) picked[o.key] = near[bi];
+      });
+    }
+
+    linkPanel = document.createElement('div');
+    linkPanel.className = 'spread linkpanel';
+    var head = document.createElement('div');
+    head.className = 'shead';
+    head.innerHTML = (existing ? '<b>묶음 고치기</b>' : '<b>동일 개체 묶기</b>') +
+      ' — 프레임마다 이 개체를 고르십시오 · <b>★ = 대표</b> · 없으면 (없음)' +
+      '<br><span class="dim">빨간 점선은 <b>탈락 후보</b>입니다 — 고르면 되살아납니다</span>';
+    linkPanel.appendChild(head);
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'sclose'; x.title = '닫기 (Esc)';
+    x.textContent = '✕';
+    x.addEventListener('click', function (ev) { ev.stopPropagation(); closeLinkPanel(); });
+    linkPanel.appendChild(x);
+
+    var err = document.createElement('div');
+    err.className = 'lerr';
+    linkPanel.appendChild(err);
+
+    function starEl(key) {
+      var st = document.createElement('span');
+      st.className = 'lstar' + (repKey === key ? ' on' : '');
+      st.textContent = '★';
+      st.title = repKey === key ? '이 판이 대표입니다'
+                                : '이 판을 대표로 (학습 자료의 얼굴이 된다)';
+      st.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        repKey = key; render();
+      });
+      return st;
+    }
+
+    var body = document.createElement('div');
+    linkPanel.appendChild(body);
+
+    function render() {
+      body.innerHTML = '';
+      order.forEach(function (o) {
+        var key = o.key;
+        var st = stateOf(key);
+        var row = document.createElement('div');
+        row.className = 'lrow';
+        var name = document.createElement('span');
+        name.className = 'lname';
+        name.textContent = o.title;
+        row.appendChild(name);
+        var cell = document.createElement('span');
+        cell.className = 'lcands';
+        row.appendChild(cell);
+
+        if (key === curKey) {
+          // 닻 — 우클릭한 그 마스크. 바꿀 수 없다(바꾸고 싶으면 그 마스크에서
+          // 다시 연다). 별만 만질 수 있다.
+          var acell = document.createElement('span');
+          acell.className = 'scell on anchor';
+          acell.appendChild(cropWithMask(anchor, shotDets[key].rel));
+          acell.appendChild(starEl(key));
+          cell.appendChild(acell);
+          body.appendChild(row);
+          return;
+        }
+
+        var near = nearOf(key);
+        // 고쳐 열었을 때 이미 고른 것이 창 밖이어도 잃지 않는다
+        // 고쳐 열었을 때 이미 고른 것이 창 밖이어도 잃지 않는다.
+        // **열쇠로 견준다** — 객체 동일성만 보면 사본이 하나라도 새로 생기는
+        // 순간 같은 것이 둘로 보인다(102 에서 실제로 났다).
+        if (picked[key] && !near.some(function (c) {
+              return keyOf(c) === keyOf(picked[key]);
+            })) {
+          near = [picked[key]].concat(near);
+        }
+
+        near.forEach(function (c) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'scell' + (picked[key] === c ? ' on' : '') +
+                        (c._rej ? ' rej' : '');
+          if (c._rej) {
+            b.title = '문턱에서 떨어진 후보 — 고르면 되살아납니다' +
+                      (c.reject ? ' (탈락사유: ' + c.reject + ')' : '');
+          }
+          b.appendChild(cropWithMask(c, shotDets[key].rel));
+          if (c._rej) {
+            var tag = document.createElement('span');
+            tag.className = 'ltag';
+            tag.textContent = '탈락';
+            b.appendChild(tag);
+          }
+          if (picked[key] === c) b.appendChild(starEl(key));
+          b.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            picked[key] = c; render();
+          });
+          cell.appendChild(b);
+        });
+        var none = document.createElement('button');
+        none.type = 'button';
+        none.className = 'lnone' + (picked[key] ? '' : ' on');
+        none.textContent = near.length ? '(없음)' : '(이 판에는 근처 후보가 없다)';
+        none.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          delete picked[key];
+          if (repKey === key) repKey = curKey;   // 대표가 빠지면 닻으로
+          render();
+        });
+        cell.appendChild(none);
+        body.appendChild(row);
+      });
+
+      // 묶으면 분류·종명이 하나가 된다 — 엇갈리면 알리고 고르게 한다
+      renderUnify();
+
+      // 발치 — 저장·풀기
+      var n = Object.keys(picked).length;
+      // **되살릴 것을 미리 말한다** — 누르고 나서 아는 것은 늦다.
+      var nRev = Object.keys(picked).filter(function (k) {
+        return picked[k] && picked[k]._rej;
+      }).length;
+      foot.innerHTML = '';
+      if (nRev) {
+        var w = document.createElement('span');
+        w.className = 'lrev';
+        w.textContent = '탈락 후보 ' + nRev + '개를 함께 되살립니다';
+        foot.appendChild(w);
+      }
+      var saveB = document.createElement('button');
+      saveB.type = 'button'; saveB.className = 'btn';
+      saveB.textContent = existing ? '묶음 저장 (' + n + '장)' : '묶기 (' + n + '장)';
+      saveB.disabled = n < 2;
+      saveB.title = n < 2 ? '다른 판에서 최소 하나를 골라야 묶인다' : '';
+      saveB.addEventListener('click', function (ev) { ev.stopPropagation(); submit(); });
+      foot.appendChild(saveB);
+      if (existing) {
+        var un = document.createElement('button');
+        un.type = 'button'; un.className = 'btn warn';
+        un.textContent = '묶음 풀기';
+        un.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          submit({ act: 'unlink', link_id: existing.id });
+        });
+        foot.appendChild(un);
+      }
+    }
+
+    // **묶으면 분류·종명은 하나가 된다** (사용자 요청 2026-08-10).
+    //
+    // 묶음은 "이 판들의 이것이 한 개체다" 라는 말이므로 분류도 종명도 하나여야
+    // 하는데, **묶기 전에 판마다 따로 적어 둔 것이 서로 다를 수 있다.** 조용히
+    // 대표 것으로 덮으면 남의 동정을 잃는다 — 종명은 현미경을 보며 적는 것이다.
+    //
+    // 그래서 **엇갈리면 알리고 사람이 고른다.** 기본은 `그대로` 라서, 아무것도
+    // 안 누르면 아무것도 안 덮는다.
+    //
+    // 하나뿐이면(나머지는 비어 있다) 그것을 미리 골라 둔다 — 덮을 판단이
+    // 없으므로 잃을 것이 없고, 그것이 "같은 개체" 라는 말의 뜻이다.
+    var unify = { label: undefined, species: undefined };   // undefined = 그대로
+    var unifyTouched = { label: false, species: false };
+    var unifyBox = document.createElement('div');
+    unifyBox.className = 'lunify';
+    linkPanel.appendChild(unifyBox);
+
+    // 고른 멤버들이 들고 있는 값. **사람이 지정한 것만 본다** — `cls` 는 엔진의
+    // 자동 판정일 수 있고, 그것을 사람의 분류로 올려 적으면 안 된다.
+    function valuesOf(field) {
+      var seen = {};
+      Object.keys(picked).forEach(function (k) {
+        var c = picked[k];
+        if (!c) return;
+        var v = field === 'label' ? (stateOf(k).labels[keyOf(c)] || '')
+                                  : (c.species || '');
+        if (!v) return;
+        seen[v] = (seen[v] || 0) + 1;
+      });
+      return seen;
+    }
+
+    function renderUnify() {
+      unifyBox.innerHTML = '';
+      // 조사가 붙으므로 엇갈릴 때의 문구를 따로 든다 ("분류이" 가 아니다)
+      [['label', '분류', '분류가 엇갈립니다',
+        function (v) { return CLS_FULL[v] || CLS_KO[v] || v; }],
+       ['species', '종명', '종명이 엇갈립니다',
+        function (v) { return v; }]].forEach(function (spec) {
+        var field = spec[0], title = spec[1], clash = spec[2], show = spec[3];
+        var seen = valuesOf(field);
+        var vals = Object.keys(seen);
+        if (!vals.length) { unify[field] = undefined; return; }
+
+        // 하나뿐이면 미리 고른다 (사람이 손대기 전까지만)
+        if (vals.length === 1 && !unifyTouched[field]) unify[field] = vals[0];
+        if (vals.length > 1 && !unifyTouched[field]) unify[field] = undefined;
+
+        var row = document.createElement('div');
+        row.className = 'urow' + (vals.length > 1 ? ' clash' : '');
+        var lab = document.createElement('span');
+        lab.className = 'ulab';
+        lab.textContent = vals.length > 1 ? clash : title;
+        row.appendChild(lab);
+
+        vals.forEach(function (v) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'uchip' + (unify[field] === v ? ' on' : '');
+          b.textContent = show(v) + (seen[v] > 1 ? ' ×' + seen[v] : '');
+          b.title = '고른 판 전부를 ' + show(v) + ' 로 맞춘다';
+          b.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            unifyTouched[field] = true;
+            unify[field] = v;
+            renderUnify();
+          });
+          row.appendChild(b);
+        });
+
+        var keep = document.createElement('button');
+        keep.type = 'button';
+        keep.className = 'uchip keep' + (unify[field] === undefined ? ' on' : '');
+        keep.textContent = '그대로';
+        keep.title = '판마다 지금 값을 그대로 둔다';
+        keep.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          unifyTouched[field] = true;
+          unify[field] = undefined;
+          renderUnify();
+        });
+        row.appendChild(keep);
+        unifyBox.appendChild(row);
+      });
+    }
+
+    var foot = document.createElement('div');
+    foot.className = 'lfoot';
+    linkPanel.appendChild(foot);
+
+    function applyUnified(payload) {
+      if (payload.label === undefined && payload.species === undefined) return;
+      Object.keys(picked).forEach(function (k) {
+        var c = picked[k];
+        if (!c) return;
+        var st = stateOf(k), mk = keyOf(c);
+        if (payload.label !== undefined) {
+          // `setLabel` 과 같은 규칙 — 규칙이 둘이면 색·되돌리기가 다르게 군다
+          applyCls(st.labels, st.cands, mk, payload.label);
+          if (k === curKey) { labels = st.labels; cands = st.cands; }
+        }
+        if (payload.species !== undefined) {
+          st.cands.forEach(function (x) {
+            if (keyOf(x) !== mk) return;
+            if (payload.species) x.species = payload.species;
+            else delete x.species;
+          });
+        }
+      });
+    }
+
+    function submit(body_) {
+      var payload = body_ || {
+        act: 'save',
+        link_id: existing ? existing.id : null,
+        members: Object.keys(picked).map(function (k) {
+          return { image: Number(stateOf(k).image),
+                   mask_key: keyOf(picked[k]),
+                   rep: k === repKey };
+        })
+      };
+      // **고른 값만 싣는다.** `그대로` 는 아예 안 보내고(서버가 안 건드린다),
+      // 빈 문자열은 "비운다" 는 말이라 뜻이 다르다.
+      if (!body_) {
+        if (unify.label !== undefined) payload.label = unify.label;
+        if (unify.species !== undefined) payload.species = unify.species;
+      }
+      saveGate.then(function () {
+        // **저장이 아직 안 됐으면 묶지 않는다** (실사용 2026-08-10).
+        //
+        // 묶기는 "화면의 마스크가 DB 에 있다" 를 전제로 한다. 밀어낸 저장이
+        // 거절당했는데 묶기만 통과하면 **한쪽만 남는다** — 실제로 프레임에서
+        // 지운 오검출 둘이 서버에서 거절당한 채, 같은 화면의 묶기는 200 이었고
+        // 되살리기까지 됐다. 사람이 보기에 "묶기는 됐는데 지운 것이 살아 있다".
+        //
+        // 묶기 POST 는 그 문(`save_review`)을 안 지나므로 여기서 센다.
+        if (savePending) {
+          throw new Error('앞선 교정이 저장되지 않았습니다 — 그 상태로 묶으면 ' +
+                          '한쪽만 남습니다. 저장 오류를 먼저 볼 것');
+        }
+        return env.send('link', location.pathname.replace(/\/?$/, '/') + 'link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }).then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+        .then(function (r) {
+          if (!r.j.ok) { err.textContent = r.j.error || ('저장 실패 (' + r.s + ')'); return; }
+          links = r.j.links || [];
+          // **되살린 것을 화면 상태에도 반영한다** (102 고침 · 실사용 보고).
+          // 서버는 `accepted` 행을 세웠는데 화면의 `shotState` 는 그것을 몰라서,
+          // **판을 넘기면 그 프레임에서 여전히 탈락으로 보였다** — 새로고침해야
+          // 맞게 나오는 상태였다.
+          //
+          // 탈락 펼침판이 되살릴 때와 **같은 규칙**으로 옮긴다: `accepted` 에
+          // 넣고, `rejects` 에서 빼고, `cands` 로 올린다(`manual`·`from_reject`
+          // 표식까지). 규칙이 둘이면 되살린 개체가 어디서 왔느냐에 따라 다르게
+          // 보인다.
+          if (payload.act !== 'unlink') {
+            Object.keys(picked).forEach(function (k) {
+              var c = picked[k];
+              if (!c || !c._rej) return;
+              var st = stateOf(k);
+              var mk = keyOf(c);
+              if (st.accepted.has(mk)) return;
+              st.accepted.add(mk);
+              st.rejects = st.rejects.filter(function (r) {
+                return keyOf(r) !== mk;
+              });
+              var copy = Object.assign({}, c, {
+                manual: true, from_reject: true, id: st.cands.length
+              });
+              delete copy._rej;
+              st.cands.push(copy);
+              // 지금 보고 있는 판이면 전역도 그 자리에서 맞춘다 — `stateOf` 가
+              // 준 배열과 전역이 갈라져 있을 수 있다(`swapDet` 이 갈아 끼운다).
+              if (k === curKey) {
+                cands = st.cands; rejects = st.rejects;
+                accepted = st.accepted;
+              }
+            });
+          }
+          // **맞춘 값을 화면 상태에도 옮긴다** (104 와 같은 자리). 서버는
+          // 멤버 전부에 적었는데 다른 판의 `labels`·`species` 는 열릴 때 받은
+          // 것이라 모른다 — 그 판에서 다음 저장이 나가면 도로 지운다.
+          if (payload.act !== 'unlink') applyUnified(payload);
+          closeLinkPanel();
+          build();          // 사슬 배지가 그 자리에서 생긴다 — 새로고침을 안 기다린다
+          flashNote(payload.act === 'unlink' ? '묶음을 풀었습니다'
+                    : '묶었습니다 (' + payload.members.length + '장' +
+                      (r.j.revived ? ' · 탈락 ' + r.j.revived + '개 되살림' : '') + ')');
+        })
+        // 앞선 교정이 안 저장된 것도 여기로 온다 — 그 말을 그대로 낸다.
+        .catch(function (e) {
+          err.textContent = (e && e.message) || '저장 실패 — 네트워크';
+        });
+    }
+
+    render();
+    document.body.appendChild(linkPanel);
+
+    // 열려 있는 동안 화면 단축키를 통째로 막는다 — q/w 가 분류를 바꾸면 안 된다.
+    linkPanel._key = function (ev) {
+      if (ev.key === 'Escape') { closeLinkPanel(); }
+      ev.stopPropagation();
+    };
+    document.addEventListener('keydown', linkPanel._key, true);
+    linkPanel._out = function (ev) {
+      if (linkPanel && !linkPanel.contains(ev.target)) closeLinkPanel();
+    };
+    document.addEventListener('mousedown', linkPanel._out, true);
+  }
+
+  // --- 우클릭 컨텍스트 메뉴 -------------------------------------------------
+  var menu = null;
+  function closeMenu() { if (menu) { menu.remove(); menu = null; } }
+
+  function removeKeys(idxs) {
+    var keys = [];
+    idxs.forEach(function (i) {
+      var c = cands[i];
+      if (!c || removed.has(keyOf(c))) return;
+      var key = keyOf(c);
+      removed.add(key);
+      keys.push(key);
+      // 되살렸던 것을 다시 지워도 개체는 cands 에 남긴다 — 흔적으로 보이고
+      // 다시 되살릴 수 있어야 한다. 복구 목록에서만 뺀다.
+      accepted.delete(key);
+    });
+    if (!keys.length) return;
+    history.push({ type: 'remove', keys: keys });
+    sel.clear();
+    build();
+    save();
+  }
+
+  function openMenu(e, d) {
+    closeMenu();
+    closeSpread();
+    tip.style.display = 'none';
+
+    // 우클릭한 박스가 선택 안에 있으면 선택 전체가 대상, 아니면 그 박스 하나.
+    var targets = [];
+    if (d.target !== null) {
+      targets = sel.has(d.target) ? Array.from(sel) : [d.target];
+    } else if (sel.size) {
+      targets = Array.from(sel);
+    }
+    var live = targets.filter(function (i) { return cands[i] && !removed.has(keyOf(cands[i])); });
+    var dead = targets.filter(function (i) { return cands[i] && removed.has(keyOf(cands[i])); });
+
+    var items = [];
+
+    // **읽기 전용에서는 고치는 항목을 아예 내지 않는다.**
+    //
+    // 저장은 이미 막혀 있다(`save()` 가 첫 줄에서 멈춘다). 그런데 메뉴는 살아
+    // 있어서 "오검출로 삭제" 를 누르면 **화면에서는 마스크가 지워지고** 분류를
+    // 고르면 색이 바뀐다 — 되는 것처럼 보인다. 그렇게 한 시야를 검토하고 나면
+    // 그 판단이 통째로 사라진다. 되는 것처럼 보이는 것이 안 되는 것보다 나쁘다.
+    //
+    // 메뉴를 통째로 안 여는 대신 **왜 안 되는지 적는다.** 아무 일도 안 일어나면
+    // 고장으로 읽힌다.
+    if (readOnly) {
+      items.push({ notice: 'Read only — 검토는 현재 검출에서 하십시오' });
+      if (d.target === null) {
+        // 탈락 후보 펼쳐 보기는 남긴다 — 보는 일이지 고치는 일이 아니다
+        // (펼친 판에서 고르는 것은 openSpread 가 따로 막는다).
+        var roPt = { x: d.x, y: d.y };
+        var roNear = rejectsAt(roPt).length;
+        items.push({ sep: true });
+        items.push({ label: '이 자리의 탈락 후보 보기' + (roNear ? ' (' + roNear + ')' : ''),
+                     disabled: !roNear,
+                     run: function () { openSpread(e, roPt); } });
+      }
+      if (sel.size) {
+        items.push({ label: '선택 해제', run: function () { sel.clear(); redraw(); } });
+      }
+    } else if (live.length) {
+      items.push({ label: '오검출로 삭제 (' + live.length + ')', danger: true,
+                   run: function () { removeKeys(live); } });
+      // **마스크 고치기** (DiaRUGA P09 4단계) — 하나만 골랐을 때다. 여럿을 한꺼번에
+      // 고치는 일은 없고, 있으면 어느 것을 고치는지 화면이 못 말한다.
+      if (live.length === 1) {
+        var one = live[0];
+        items.push({ label: '✎ 마스크 고치기',
+                     run: function () { editStart(one); } });
+        // **되돌릴 엔진 개체가 있을 때만 낸다** (180 A3 · 2026-09-03).
+        // 고아(재검출에서 짝을 잃은 교정)에도 `geom_edited` 가 얹히는데,
+        // 되돌릴 원본이 없어 서버가 409 로 물린다 — **그 저장 전체가 거절되고**
+        // `editRevert` 는 곧바로 새로고침하므로 저장 안 된 나머지까지 화면에서
+        // 사라진다. 눌러도 안 되는 항목을 안 내는 것이 맞다.
+        if (cands[one] && cands[one].geom_edited && !cands[one].orphan) {
+          items.push({ label: '↺ 엔진이 낸 모양으로',
+                       run: function () { editRevert(one); } });
+        }
+        // 같은 개체 묶기 (DiaRUGA P11) — 판이 둘 이상일 때만 묶을 상대가 있다
+        if (canLink()) {
+          var lk0 = linkOf(curImage, keyOf(cands[one]));
+          items.push({ label: lk0 ? '⛓ 묶음 열기 (' + lk0.members.length + '장)'
+                                  : '⛓ 동일 개체 묶기',
+                       run: function () { openLinkPanel(one); } });
+        }
+        // **다른 판에도 앉히기** (DiaRUGA P19) — 검출이 한두 판에서만 잘 잡혔을 때
+        // 그 마스크를 나머지 판에 앉히고 한 개체로 묶는다. 얼굴이 목적이다.
+        //
+        // **괄호 안이 앉힐 판 수이고, 0이면 항목을 안 낸다** — "눌렀는데 아무
+        // 일도 안 나는" 자리를 만들지 않는다(싱글턴 시야가 그 자리다).
+        //
+        // **사람이 그린 마스크에는 안 낸다** — 그쪽은 저장할 때
+        // `_spread_drawn` 이 이미 번지게 한다. 두 문이 같은 일을 하면 규칙이
+        // 둘이 된다.
+        //
+        // **오프라인 파일에는 안 낸다** (DiaRUGA P25 3.3) — 묶기와 같은 이유다:
+        // 서버가 다른 판에 행을 만들고 대표를 다시 뽑는 일이라 기록으로
+        // 미룰 수 없다.
+        var spTargets = (cands[one].manual || env.offline)
+                        ? [] : spreadTargets(keyOf(cands[one]));
+        if (spTargets.length) {
+          items.push({ label: '⧸ 다른 판에도 앉히기 (' + spTargets.length + ')',
+                       run: function () { spreadOne(one); } });
+        }
+        {% comment %}
+          **카드로 가는 항목은 여기 없다** (DiaRUGA 150). 149 에서 묶기 바로 아래
+          두었더니 **검토하다 잘못 눌러 화면이 넘어갔다**(사용자 2026-08-25).
+          맨 아래로 내렸다 — 아래 `toCard` 를 볼 것.
+        {% endcomment %}
+      }
+      items.push({ sep: true });
+      // 분류 직접 지정 — 조각난 것이 봉상/원형으로 잘못 분류되는 것을 고친다.
+      // 형태 칸과 분류학 칸(Eucampia) 사이에는 줄을 그어 성격을 갈라 둔다.
+      var wasTaxon = false;
+      CLASS_DEFS.forEach(function (d) {
+        if (d.taxon && !wasTaxon) items.push({ sep: true });
+        wasTaxon = d.taxon;
+        var same = live.every(function (i) { return cands[i].cls === d.key; });
+        items.push({
+          label: (same ? '✓ ' : '') + d.label +
+                 (live.length > 1 ? ' (' + live.length + '개)' : ''),
+          run: function () { setLabel(live, d.key); }
+        });
+      });
+      if (live.some(function (i) { return cands[i].cls_user; })) {
+        items.push({ label: '분류 지정 해제 (자동 판정으로)',
+                     run: function () { setLabel(live, null); } });
+      }
+      items.push({ sep: true });
+    }
+    // 아래는 전부 **고치는 항목**이다 — 읽기 전용에서는 위 갈래가 이미 낼 것을
+    // 냈으므로 건너뛴다. 조건마다 `!readOnly` 를 붙여 두는 것은, 여기에 항목을
+    // 하나 더할 때 읽기 전용을 잊어도 새는 곳이 없게 하기 위해서다.
+    if (!readOnly && dead.length) {
+      items.push({ label: '되살리기 (' + dead.length + ')', run: function () {
+        var keys = dead.map(function (i) { return keyOf(cands[i]); });
+        restore(keys);
+        history.push({ type: 'restore', keys: keys });
+        build(); save();
+      } });
+    }
+    if (!readOnly && d.target === null) {
+      var pt = { x: d.x, y: d.y };
+      var near = rejectsAt(pt).length;
+      items.push({ label: '이 자리의 탈락 후보 보기' + (near ? ' (' + near + ')' : ''),
+                   disabled: !near,
+                   run: function () { openSpread(e, pt); } });
+    }
+    if (!readOnly && sel.size) items.push({ label: '선택 해제', run: function () { sel.clear(); redraw(); } });
+    if (!readOnly && history.length) items.push({ label: '↶ 실행취소', run: undo });
+
+    {% comment %}
+      **이 개체 카드로** (149 · 자리는 150). 개체를 두고 하는 말은 카탈로그에서
+      적기로 했는데(0036), 검토하다 "이건 동정해 둬야겠다" 싶으면 그 화면을
+      따로 열어 번호로 다시 찾아야 했다 — 118 이 낸 길의 반대 방향이 없었다.
+      **열쇠는 118 과 같은 `(obj, img)` 다.**
+
+      **맨 아래에 둔다.** 149 에서는 묶기(`⛓`) 바로 아래였는데, 둘 다 개체
+      하나를 고르고 누르는 것이라 손이 같은 자리로 가고 **잘못 눌러 화면이
+      넘어간 일이 여러 번 났다**(사용자 2026-08-25). 되돌릴 수 있는 항목들
+      사이에 **화면을 떠나는 항목**을 끼우지 않는다 — 실행취소가 안 듣는
+      유일한 항목이다. 줄(`sep`)로 한 번 더 가른다.
+
+      **읽기 전용에서는 안 낸다.** 카탈로그는 검토 대상 묶음만 따라가므로
+      (`data.catalog_rows`) 다른 묶음의 개체는 거기 카드가 아예 없고, 눌러서
+      "없습니다" 를 보는 자리를 만들지 않는다.
+
+      **`leave()` 로 떠난다.** 지연 저장이 걸려 있을 수 있고, 그것이 못 나가면
+      떠나면 안 된다 (116 — "떠나는 자리는 전부 그 문으로 보낸다").
+    {% endcomment %}
+    // **주소가 없으면 이 항목은 없다** (DiaRUGA P25) — 오프라인 파일에는 갈 화면이 없다.
+    var toCard = (CATALOG_URL && !readOnly && live.length === 1) ? live[0] : -1;
+    if (toCard >= 0 && cands[toCard]) {
+      items.push({ sep: true });
+      items.push({ label: '📇 이 개체 카드로 (화면을 떠납니다)',
+                   run: function () {
+                     var c1 = cands[toCard];
+                     if (!c1) return;
+                     leave(CATALOG_URL + '?obj=' + encodeURIComponent(keyOf(c1)) +
+                           '&img=' + encodeURIComponent(curImage || ''));
+                   } });
+    }
+    if (!items.length) return;
+
+    menu = document.createElement('div');
+    menu.className = 'ctxmenu';
+    items.forEach(function (it) {
+      if (it.sep) {
+        var hr = document.createElement('div');
+        hr.className = 'msep';
+        menu.appendChild(hr);
+        return;
+      }
+      // 알림 줄. **disabled 단추로 내지 않는다** — 그쪽은 opacity .4 라
+      // "지금은 못 누르는 항목" 으로 읽히고, 이건 왜 아무 항목도 없는지를
+      // 설명하는 말이다.
+      if (it.notice) {
+        var nb = document.createElement('div');
+        nb.className = 'mnote';
+        nb.textContent = it.notice;
+        menu.appendChild(nb);
+        return;
+      }
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.label;
+      if (it.danger) b.className = 'danger';
+      if (it.disabled) { b.disabled = true; }
+      else b.addEventListener('click', function (ev) {
+        ev.stopPropagation(); closeMenu(); it.run();
+      });
+      menu.appendChild(b);
+    });
+    document.body.appendChild(menu);
+    var w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.min(window.innerWidth - w - 6, e.clientX + 2) + 'px';
+    menu.style.top = Math.min(window.innerHeight - h - 6, e.clientY + 2) + 'px';
+  }
+
+  // --- 겹친 개체 순환 선택 --------------------------------------------------
+  // SAM2 는 한 자리에 여러 스케일의 마스크를 내므로 bbox 가 예사로 겹친다
+  // (후보의 84%가 더 큰 마스크 안에 든다 — devlog 002). 맨 위의 것만 잡히면
+  // 아래 것을 고를 방법이 없어서, 같은 자리를 다시 누르면 다음 것으로 넘어간다.
+  var cycle = null;      // {sx, sy, keys, at, n, pick}
+
+  // bbox 를 끄면 화면에 보이는 것은 마스크뿐이다. 그때 클릭 판정을 bbox 로
+  // 하면 큰 물체의 빈 자리를 눌렀을 때 보이지도 않는 것이 잡힌다 — 보이는
+  // 것으로 판정해야 한다. bbox 는 폴리곤 판정 전의 값싼 1차 걸름망으로 쓴다.
+  function maskMode() { return view.classList.contains('hide-box'); }
+  function hasPoly(c) { return !!(c.polygon && c.polygon.length >= 6); }
+
+  function inPolygon(p, x, y) {
+    // ray casting. p 는 [x0,y0,x1,y1,...] 로 납작하게 들어온다.
+    var inside = false, n = p.length / 2;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var xi = p[2 * i], yi = p[2 * i + 1], xj = p[2 * j], yj = p[2 * j + 1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function hitsAt(pt, wantGone) {
+    var mask = maskMode();
+    var hits = [];
+    cands.forEach(function (c, i) {
+      var gone = removed.has(keyOf(c));
+      if (gone !== !!wantGone) return;
+      // 지운 것은 마스크를 칠하지 않는다 — 마스크 모드에서는 안 보이므로
+      // 누를 수도 없어야 한다(되살리려면 bbox 를 다시 켠다).
+      if (gone && mask) return;
+      var b = c.bbox_xywh;
+      if (pt.x < b[0] || pt.x > b[0] + b[2] ||
+          pt.y < b[1] || pt.y > b[1] + b[3]) return;
+      // 폴리곤이 없는 개체(윤곽이 너무 단순해 저장되지 않은 것)는 bbox 로 본다.
+      if (mask && hasPoly(c) && !inPolygon(c.polygon, pt.x, pt.y)) return;
+      hits.push(i);
+    });
+    // 작은 것부터 — 맨 위에 그려지는 것이 가장 작은 것이라 첫 클릭의 결과가
+    // 눈에 보이는 것과 같아진다.
+    hits.sort(function (a, b) {
+      return (cands[a].area_px || 0) - (cands[b].area_px || 0);
+    });
+    return hits;
+  }
+
+  function liveHitsAt(pt) { return hitsAt(pt, false); }
+
+  // 살아있는 것과 지운 것을 합쳐 맨 위(가장 작은) 하나. 우클릭 대상과
+  // 유령 되살리기가 이것을 쓴다.
+  function topHitAt(pt) {
+    var all = hitsAt(pt, false).concat(hitsAt(pt, true));
+    if (!all.length) return null;
+    all.sort(function (a, b) {
+      return (cands[a].area_px || 0) - (cands[b].area_px || 0);
+    });
+    return all[0];
+  }
+
+  function nextInCycle(d, hits) {
+    var keys = hits.join(',');
+    // 손이 미세하게 흔들려도 같은 자리로 본다. 자리가 바뀌면 처음부터.
+    var same = cycle && cycle.keys === keys &&
+      Math.abs(d.sx - cycle.sx) <= 4 && Math.abs(d.sy - cycle.sy) <= 4;
+    var at = same ? (cycle.at + 1) % hits.length : 0;
+    cycle = { sx: d.sx, sy: d.sy, keys: keys, at: at,
+              n: hits.length, pick: hits[at] };
+    return cycle.pick;
+  }
+
+  // 탈락 후보는 **마스크로만** 판정한다. bbox 로 재면 빈 곳에서도 잔뜩 뜬다 —
+  // 탈락 후보의 bbox 합집합이 화면의 46.6% 인데 마스크 합집합은 19.5% 다(실측).
+  // 그 차이 25%p 는 아무것도 없는 자리이고, 탈락분은 그려지지 않으므로 왜 떴는지
+  // 알 수도 없다. bbox 는 값싼 1차 걸름망으로만 쓴다.
+  // 탈락 후보가 지금 화면에 그려져 있는가. `hide-reject` 는 레이어 토글이
+  // 붙이는 클래스다(applyLayers). **mask 를 꺼도 탈락은 남는다** —
+  // `.detview.hide-mask svg.masks polygon:not(.reject)` 이라 이 레이어 하나만
+  // 보면 된다.
+  function rejectsShown() { return !view.classList.contains('hide-reject'); }
+
+  function rejectsAt(pt) {
+    return rejects.filter(function (c) {
+      if (accepted.has(keyOf(c))) return false;
+      var b = c.bbox_xywh;
+      if (pt.x < b[0] || pt.x > b[0] + b[2] ||
+          pt.y < b[1] || pt.y > b[1] + b[3]) return false;
+      return hasPoly(c) && inPolygon(c.polygon, pt.x, pt.y);
+    });
+  }
+
+  document.addEventListener('mousedown', function (e) {
+    if (menu && !menu.contains(e.target)) closeMenu();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { closeMenu(); closeSpread(); closeAsk(); }
+  });
+
+  // --- 마스크 그리기 (DiaRUGA P09 3단계) --------------------------------------------
+  //
+  // **점 찍기다.** 브러시는 버렸다 — 지우개·굵기 같은 상태가 붙고 실행취소
+  // 단위가 모호해진다. 개체 윤곽은 매끈해서 점 10~20개면 충분하고, 실측으로
+  // 엔진이 내는 폴리곤도 중앙 13점이다(DiaRUGA P09 5.11).
+  //
+  // **그리는 중의 실행취소는 `history` 와 따로다.** 그리다 만 것과 저장된
+  // 교정은 다른 층이라, 섞으면 Ctrl+Z 한 번이 어느 쪽을 되돌리는지 모호해진다.
+  // 여기서는 Backspace 가 점 하나를 무른다.
+  var drawing = null;
+  var drawG = null;
+  // 첫 점을 다시 눌러 닫는다. 화면 화소 기준이라 확대해도 손맛이 같다.
+  var CLOSE_PX = 12;
+
+  function drawKey() {
+    // **불투명한 키** — bbox 를 넣으면 "키가 곧 기하" 라는 죽은 규약이 이어져
+    // 4단계에서 경계를 고쳤을 때 파싱한 쪽이 틀린 값을 얻는다 (DiaRUGA P09 5.4).
+    var a = new Uint8Array(4);
+    if (window.crypto && window.crypto.getRandomValues) crypto.getRandomValues(a);
+    else for (var i = 0; i < 4; i++) a[i] = Math.floor(Math.random() * 256);
+    return 'm' + Array.prototype.map.call(a, function (v) {
+      return ('0' + v.toString(16)).slice(-2);
+    }).join('');
+  }
+
+  function drawLayer() {
+    if (!drawG) {
+      drawG = document.createElementNS(SVGNS, 'g');
+      drawG.setAttribute('class', 'drawing');
+      svg.appendChild(drawG);
+    }
+    // **늘 맨 위에 둔다.** `build()` 가 마스크를 다시 붙이면 문서 순서상 뒤로
+    // 가는데, SVG 는 나중 것이 위에 그려져 그리던 점이 마스크에 묻힌다.
+    svg.appendChild(drawG);
+    return drawG;
+  }
+
+  function drawRender() {
+    var g = drawLayer();
+    g.textContent = '';
+    if (!drawing) return;
+    var pts = drawing.pts;
+    // **마지막 점에서 커서까지 이어 그린다** (DiaRUGA 082). 점만 찍히면 다음 변이 어디로
+    // 갈지 **찍어 봐야** 안다 — 개체의 윤곽은 굽은 선이라 그 한 걸음이 눈에
+    // 보여야 형태를 따라갈 수 있다.
+    //
+    // 점이 셋 이상이면 **닫히는 변**도 함께 옅게 보인다. 지금 닫으면 어떤 모양이
+    // 되는지가 그것으로 드러난다.
+    if (drawing.at && pts.length) {
+      var last = pts[pts.length - 1];
+      var rub = document.createElementNS(SVGNS, 'polyline');
+      rub.setAttribute('class', 'rubber');
+      rub.setAttribute('points', last[0] + ',' + last[1] + ' ' +
+                       drawing.at[0] + ',' + drawing.at[1]);
+      g.appendChild(rub);
+      if (pts.length >= 3) {
+        var close = document.createElementNS(SVGNS, 'polyline');
+        close.setAttribute('class', 'rubber close');
+        close.setAttribute('points', drawing.at[0] + ',' + drawing.at[1] + ' ' +
+                           pts[0][0] + ',' + pts[0][1]);
+        g.appendChild(close);
+      }
+    }
+    if (pts.length > 1) {
+      var line = document.createElementNS(SVGNS, 'polyline');
+      line.setAttribute('points', pts.map(function (p) {
+        return p[0] + ',' + p[1];
+      }).join(' '));
+      g.appendChild(line);
+    }
+    pts.forEach(function (p, i) {
+      var c = document.createElementNS(SVGNS, 'circle');
+      c.setAttribute('cx', p[0]);
+      c.setAttribute('cy', p[1]);
+      // 첫 점은 크게 — 여기를 다시 누르면 닫힌다는 것이 보여야 한다
+      c.setAttribute('r', i === 0 ? 5 : 3.2);
+      if (i === 0) c.setAttribute('class', 'first');
+      g.appendChild(c);
+    });
+  }
+
+  function drawStatus() {
+    if (!saveState) return;
+    if (!drawing) return;
+    var n = drawing.pts.length;
+    saveState.textContent = n < 3
+      ? '마스크 그리는 중 — 점 ' + n + '개 (최소 3개) · Esc 취소'
+      : '마스크 그리는 중 — 점 ' + n + '개 · 첫 점을 다시 누르거나 Enter 로 닫는다'
+        + ' · Backspace 무르기 · Esc 취소';
+  }
+
+  // **단추와 상태를 한 자리에서 맞춘다.** 따로 두면 Esc 로 끄고도 단추가
+  // 눌린 채로 남아 "켜져 있는 줄 알고" 사진을 누르게 된다 — 그러면 선택이
+  // 되고, 켠 줄 알았던 사람은 왜 안 그려지는지 모른다.
+  function syncDrawBtn() {
+    // **`.detview` 안에서 찾는다** (DiaRUGA 194). 연필은 `#tools-` 밖(사진 오른쪽 위)
+    // 으로 나갔고, 상자를 짚어 찾으면 여기가 조용히 아무 일도 안 하게 된다 —
+    // 그러면 Esc 로 끄고도 단추가 눌린 채 남는다(위 주석이 막으려던 그것이다).
+    var b = view && view.querySelector('button[data-act="draw"]');
+    if (b) b.classList.toggle('on', !!(drawing || editing));
+  }
+
+  function drawStart() {
+    if (readOnly) return;
+    drawing = { pts: [], at: null };
+    view.classList.add('drawing');
+    sel.clear();
+    closeMenu(); closeSpread();
+    drawRender(); redraw(); drawStatus(); syncDrawBtn();
+  }
+
+  function drawCancel() {
+    if (!drawing) return;
+    drawing = null;
+    view.classList.remove('drawing');
+    drawRender(); redraw(); syncDrawBtn();
+  }
+
+  function drawFinish() {
+    if (!drawing) return;
+    var pts = drawing.pts;
+    if (pts.length < 3) { drawCancel(); return; }
+    var poly = [];
+    pts.forEach(function (p) { poly.push(p[0], p[1]); });
+    var xs = pts.map(function (p) { return p[0]; });
+    var ys = pts.map(function (p) { return p[1]; });
+    var x0 = Math.floor(Math.min.apply(null, xs));
+    var y0 = Math.floor(Math.min.apply(null, ys));
+    var x1 = Math.ceil(Math.max.apply(null, xs));
+    var y1 = Math.ceil(Math.max.apply(null, ys));
+    // **서버가 다시 잰다.** 여기 값은 그리는 데만 쓴다 — 클라이언트가 보낸
+    // 면적을 믿으면 브라우저마다 다른 숫자가 DB 에 앉는다 (DiaRUGA P09 5.8).
+    var c = {
+      key: drawKey(),
+      source: 'manual',
+      orphan: true,
+      polygon: poly,
+      bbox_xywh: [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)],
+      center_xy: [x0 + ((x1 - x0) >> 1), y0 + ((y1 - y0) >> 1)],
+      cls: null
+    };
+    drawing = null;
+    view.classList.remove('drawing');
+    cands.push(c);
+    drawRender();
+    build();
+    // 방금 그린 것을 골라 둔다 — 분류를 바로 지정하는 것이 다음 동작이다.
+    sel.clear(); sel.add(cands.length - 1);
+    redraw(); syncDrawBtn();
+    save();
+  }
+
+  function drawPoint(p) {
+    var pts = drawing.pts;
+    if (pts.length >= 3) {
+      // 첫 점 근처면 닫는다. **화면 화소로 잰다** — 이미지 좌표로 재면 확대
+      // 배율에 따라 손맛이 달라진다(확대할수록 닫기가 어려워진다).
+      //
+      // 배율은 svg 의 실제 화면 폭에서 얻는다 — `transform` 이 이미 반영되어
+      // 있어서 `k` 를 따로 곱하면 두 번 세게 된다.
+      var box = svg.getBoundingClientRect();
+      var scale = W ? box.width / W : 1;
+      var d = Math.hypot(p.x - pts[0][0], p.y - pts[0][1]) * scale;
+      if (d <= CLOSE_PX) { drawFinish(); return; }
+    }
+    pts.push(inImage(p));
+    drawRender(); drawStatus();
+  }
+
+  // --- 마스크 고치기 (DiaRUGA P09 4단계) --------------------------------------------
+  //
+  // **점 끌기다.** 실측으로 YOLO 폴리곤이 중앙 13점·90%가 18점 이하라 단순화
+  // 단계 없이 그대로 끌 수 있다(DiaRUGA P09 5.11). 선분 중간을 누르면 점이 늘고, 점을
+  // 더블클릭하면 준다.
+  //
+  // **고친 기하는 `edits` 로 나가고 `Candidate` 는 안 건드린다** — 검출 이력에서
+  // 엔진이 낸 것과 사람이 손댄 것을 못 가르면 회차 비교가 무의미해진다.
+  var editing = null;                  // {i, key, pts, grab}
+  // 점을 집는 반경. 화면 화소라 확대해도 손맛이 같다.
+  var GRAB_PX = 10;
+  var edits = {};                      // 키 → 폴리곤 (빈 배열이면 되돌리기)
+
+  function editStart(i) {
+    if (readOnly) return;
+    var c = cands[i];
+    if (!c || !hasPoly(c)) return;
+    drawCancel();
+    closeMenu(); closeSpread();
+    var pts = [];
+    for (var j = 0; j < c.polygon.length; j += 2) {
+      pts.push([c.polygon[j], c.polygon[j + 1]]);
+    }
+    editing = { i: i, key: keyOf(c), pts: pts, grab: -1 };
+    view.classList.add('drawing');
+    sel.clear(); sel.add(i);
+    editRender(); redraw(); syncDrawBtn();
+    if (saveState) {
+      saveState.textContent = '마스크 고치는 중 — 점을 끌어 옮긴다 · 선분을 '
+        + '누르면 점이 늘고 · 점을 더블클릭하면 준다 · Enter 마침 · Esc 취소';
+    }
+  }
+
+  function editRender() {
+    var g = drawLayer();
+    g.textContent = '';
+    if (!editing) return;
+    var poly = document.createElementNS(SVGNS, 'polyline');
+    poly.setAttribute('points', editing.pts.concat([editing.pts[0]])
+      .map(function (p) { return p[0] + ',' + p[1]; }).join(' '));
+    g.appendChild(poly);
+    editing.pts.forEach(function (p, j) {
+      var c = document.createElementNS(SVGNS, 'circle');
+      c.setAttribute('cx', p[0]);
+      c.setAttribute('cy', p[1]);
+      c.setAttribute('r', j === editing.grab ? 5 : 3.2);
+      if (j === editing.grab) c.setAttribute('class', 'first');
+      g.appendChild(c);
+    });
+  }
+
+  function imgScale() {
+    var box = svg.getBoundingClientRect();
+    return W ? box.width / W : 1;
+  }
+
+  // 집을 점 — 없으면 -1
+  function editHit(p) {
+    var s = imgScale(), best = -1, bd = GRAB_PX;
+    editing.pts.forEach(function (q, j) {
+      var d = Math.hypot(p.x - q[0], p.y - q[1]) * s;
+      if (d <= bd) { bd = d; best = j; }
+    });
+    return best;
+  }
+
+  // 선분 위의 가장 가까운 자리 — 여기를 누르면 점이 는다.
+  function editEdge(p) {
+    var s = imgScale(), best = -1, bd = GRAB_PX;
+    var n = editing.pts.length;
+    for (var j = 0; j < n; j++) {
+      var a = editing.pts[j], b = editing.pts[(j + 1) % n];
+      var vx = b[0] - a[0], vy = b[1] - a[1];
+      var len2 = vx * vx + vy * vy;
+      if (!len2) continue;
+      var t = Math.max(0, Math.min(1, ((p.x - a[0]) * vx + (p.y - a[1]) * vy) / len2));
+      var d = Math.hypot(p.x - (a[0] + t * vx), p.y - (a[1] + t * vy)) * s;
+      if (d <= bd) { bd = d; best = j; }
+    }
+    return best;
+  }
+
+  function editCancel() {
+    if (!editing) return;
+    editing = null;
+    view.classList.remove('drawing');
+    editRender(); redraw(); syncDrawBtn();
+  }
+
+  function editFinish() {
+    if (!editing) return;
+    var c = cands[editing.i];
+    if (!c || editing.pts.length < 3) { editCancel(); return; }
+    var poly = [];
+    editing.pts.forEach(function (p) { poly.push(Math.round(p[0]), Math.round(p[1])); });
+    var xs = editing.pts.map(function (p) { return p[0]; });
+    var ys = editing.pts.map(function (p) { return p[1]; });
+    var x0 = Math.floor(Math.min.apply(null, xs));
+    var y0 = Math.floor(Math.min.apply(null, ys));
+    var x1 = Math.ceil(Math.max.apply(null, xs));
+    var y1 = Math.ceil(Math.max.apply(null, ys));
+    c.polygon = poly;
+    // **`bbox_xywh` 는 바뀌지만 키는 안 바뀐다.** `keyOf` 가 `c.key` 를 먼저
+    // 보기 때문이고, 그것이 이 기능이 성립하는 이유다 (DiaRUGA P09 5.4).
+    c.bbox_xywh = [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)];
+    c.center_xy = [x0 + ((x1 - x0) >> 1), y0 + ((y1 - y0) >> 1)];
+    c.geom_edited = true;
+    if (isManual(c)) {
+      // 사람이 그린 것은 `drawn` 이 통째로 나른다 — `edits` 에 넣으면 엔진
+      // 쪽 키로 취급되어 서버가 모른다고 거절한다.
+      delete edits[editing.key];
+    } else {
+      edits[editing.key] = poly;
+    }
+    editing = null;
+    view.classList.remove('drawing');
+    editRender();
+    build(); redraw(); syncDrawBtn(); save();
+  }
+
+  function editRevert(i) {
+    var c = cands[i];
+    if (!c || isManual(c)) return;
+    // 빈 폴리곤이 "엔진 것으로 되돌린다" 는 말이다. 화면은 서버가 다시 낸
+    // 것으로 맞춰야 하므로 저장 뒤 새로고침한다 — 엔진의 원래 폴리곤을
+    // 화면이 들고 있지 않기 때문이다(교정이 덮어 놓았다).
+    edits[keyOf(c)] = [];
+    save();
+    setTimeout(function () { location.reload(); }, 500);
+  }
+
+  // --- 마우스: 선택 / 범위선택 / 이동 / 삭제 -------------------------------
+  var down = null, mode = null;
+
+  view.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    // **길게 누르면 여기로 온다** (192 · 모바일). 마우스 우클릭은 `mouseup` 이
+    // 메뉴를 내므로 **손가락일 때만** 여기서 낸다 — 안 가르면 마우스에서 두 번
+    // 열린다. 그리기·고치기 중에는 안 낸다(그 조작이 먼저다).
+    if (!byTouch || drawing || editing) return;
+    var pt = toImage(e);
+    openMenu(e, { x: pt.x, y: pt.y, fx: pt.fx, fy: pt.fy,
+                  shift: false, btn: 2, target: topHitAt(pt) });
+  });
+
+  // 점을 더블클릭하면 뺀다. **3점 아래로는 못 뺀다** — 도형이 아니게 된다.
+  view.addEventListener('dblclick', function (e) {
+    if (!editing) return;
+    var j = editHit(toImage(e));
+    if (j >= 0 && editing.pts.length > 3) {
+      editing.pts.splice(j, 1);
+      editing.grab = -1;
+      editRender();
+    }
+    e.preventDefault();
+  });
+
+  view.addEventListener('mousedown', function (e) {
+    var pt = toImage(e);
+    // **고치는 중에는 점을 집는다.** 선택·범위선택으로 흘려보내면 끌기가
+    // 범위선택이 되어 개체가 우수수 골라진다.
+    if (editing && e.button === 0) {
+      editing.grab = editHit(pt);
+      if (editing.grab < 0) {
+        var edge = editEdge(pt);
+        if (edge >= 0) {                 // 선분을 누르면 점이 는다
+          editing.pts.splice(edge + 1, 0, inImage(pt));
+          editing.grab = edge + 1;
+        }
+      }
+      editRender();
+      e.preventDefault();
+      return;
+    }
+    // target 은 mouseup 에서 좌표로 다시 정한다 (bbox/마스크 판정이 갈리므로).
+    down = {
+      sx: e.clientX, sy: e.clientY, fx: pt.fx, fy: pt.fy, x: pt.x, y: pt.y,
+      shift: e.shiftKey, btn: e.button, target: null,
+      tx0: tx, ty0: ty
+    };
+    mode = null;
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', function (e) {
+    if (editing && editing.grab >= 0) {
+      var p = toImage(e);
+      editing.pts[editing.grab] = inImage(p);      // 밖으로 못 끈다 (위 주석)
+      editRender();
+      return;
+    }
+    if (!down) return;
+    var dx = e.clientX - down.sx, dy = e.clientY - down.sy;
+    if (!mode && Math.abs(dx) + Math.abs(dy) > 4) {
+      mode = (down.btn === 2) ? 'pan' : 'band';
+      tip.style.display = 'none';
+      if (mode === 'band') band.style.display = 'block';
+    }
+    if (mode === 'pan') {
+      tx = down.tx0 + dx; ty = down.ty0 + dy;
+      clampPan(); applyTransform();
+    } else if (mode === 'band') {
+      var r = view.getBoundingClientRect();
+      var x0 = down.sx - r.left, y0 = down.sy - r.top;
+      var x1 = e.clientX - r.left, y1 = e.clientY - r.top;
+      band.style.left = Math.min(x0, x1) + 'px';
+      band.style.top = Math.min(y0, y1) + 'px';
+      band.style.width = Math.abs(x1 - x0) + 'px';
+      band.style.height = Math.abs(y1 - y0) + 'px';
+    }
+  });
+
+  window.addEventListener('mouseup', function (e) {
+    if (editing) { editing.grab = -1; editRender(); return; }
+    if (!down) return;
+    var d = down; down = null;
+    var m = mode; mode = null;
+    band.style.display = 'none';
+
+    if (m === 'pan') return;
+
+    // **그리는 중에는 클릭이 점 찍기다** (DiaRUGA P09 3단계). 선택·범위선택으로
+    // 흘려보내면 그리다가 개체가 골라지고, 그 상태에서 분류 단축키가 먹는다.
+    if (drawing) {
+      if (m === null && d.btn === 0) drawPoint(toImage(e));
+      return;
+    }
+
+    if (m === 'band') {
+      var p = toImage(e);
+      var x0 = Math.min(d.x, p.x), x1 = Math.max(d.x, p.x);
+      var y0 = Math.min(d.y, p.y), y1 = Math.max(d.y, p.y);
+      if (!d.shift) sel.clear();
+      cands.forEach(function (c, i) {
+        if (removed.has(keyOf(c))) return;
+        var b = c.bbox_xywh;
+        if (b[0] < x1 && b[0] + b[2] > x0 && b[1] < y1 && b[1] + b[3] > y0) sel.add(i);
+      });
+      redraw();
+      return;
+    }
+
+    // 어느 개체를 눌렀는가는 e.target 이 아니라 좌표로 정한다 — bbox 가 꺼져
+    // 있으면 마스크로 재야 하고, 겹친 것을 순환하려면 목록이 필요하다.
+    var pt = { x: d.x, y: d.y };
+    var top = topHitAt(pt);
+
+    // 움직임 없는 우클릭 -> 컨텍스트 메뉴 (드래그였다면 위에서 pan 으로 끝났다)
+    if (d.btn === 2) { d.target = top; openMenu(e, d); return; }
+
+    if (d.btn !== 0) return;
+
+    // Shift+클릭은 더하고 빼는 조작이라 순환하지 않는다 — 두 번 누르면 제자리로
+    // 돌아와야 한다. 맨 위의 것 하나만 토글한다.
+    //
+    // **유령 되살리기보다 이쪽이 먼저다.** 예전에는 순서가 반대라 유령은
+    // Shift 를 눌러도 곧바로 되살아났고, 범위 선택도 지운 것을 걸러 내므로
+    // **지운 개체를 고를 방법이 아예 없었다.** 그러면 스페이스의 되살리기
+    // 갈래가 닿지 못하는 코드가 된다. 그냥 클릭은 아래에서 그대로 되살린다.
+    if (d.shift) {
+      if (top !== null) { sel.has(top) ? sel.delete(top) : sel.add(top); }
+      redraw();
+      return;
+    }
+
+    // 지운 것(유령)을 클릭하면 되살린다 — 순환 대상에서는 빼고 이쪽이 먼저다.
+    if (top !== null && removed.has(keyOf(cands[top]))) {
+      var key = keyOf(cands[top]);
+      restore([key]);
+      history.push({ type: 'restore', keys: [key] });
+      build();
+      save();
+      return;
+    }
+
+    // **탈락 레이어를 켰으면 탈락 후보가 먼저다.**
+    //
+    // 예전에는 아래의 liveHitsAt() 이 먼저였다. 그래서 검출 개체와 겹친 탈락
+    // 후보는 **누를 방법이 아예 없었다** — 클릭이 늘 검출 개체에서 멈추고
+    // 펼침까지 가지 못했다. 탈락 후보는 겹쳐 있는 것이 예사라(시야당 100개가
+    // 넘는다) 정작 되살리고 싶은 것이 대개 그 뒤에 있다.
+    //
+    // **켰을 때만이다.** 꺼 두면 화면에 없는 것이라, 그때도 우선하면 아무것도
+    // 안 보이는 자리에서 펼침이 튀어나온다.
+    //
+    // 검출 개체를 고를 길은 남아 있다 — **Shift+클릭**은 위에서 이미 갈라져
+    // 나가고(cands 만 본다), 우클릭 메뉴도 그대로다.
+    if (rejectsShown() && openSpread(e, pt)) {
+      cycle = null;
+      sel.clear();
+      redraw();
+      return;
+    }
+
+    // 그냥 클릭 -> 그 자리에 겹친 개체를 클릭마다 돌려 가며 고른다.
+    var hits = liveHitsAt(pt);
+    if (hits.length) {
+      sel.clear();
+      sel.add(nextInCycle(d, hits));
+      redraw();
+      return;
+    }
+
+    // 빈 곳 클릭 -> 그 자리의 탈락 후보를 펼쳐 보여준다
+    cycle = null;
+    sel.clear();
+    redraw();
+    openSpread(e, { x: d.x, y: d.y });
+  });
+
+  // --- 버튼 (사진 위 오버레이) ---------------------------------------------
+  var tools = document.getElementById('tools-' + uid);
+  // **연필은 따로 산다** (DiaRUGA 194) — 사진 오른쪽 위. 배선은 한 벌이고 자리만 둘이다.
+  var drawTool = document.getElementById('drawtool-' + uid);
+  var doneBar = document.getElementById('donebar-' + uid);
+
+  // 사진 위에 있으므로 캔버스가 이 클릭을 확대·선택·이동으로 받으면 안 된다.
+  ['wheel', 'mousedown', 'contextmenu'].forEach(function (ev) {
+    [tools, drawTool, doneBar].forEach(function (el) {
+      if (el) el.addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+  });
+
+  function onTool(e) {
+    var act = e.target.dataset && e.target.dataset.act;
+    if (!act) return;
+    // 전파를 끊었으니 열려 있던 메뉴·펼침은 직접 닫는다.
+    closeMenu(); closeSpread(); tip.style.display = 'none';
+    if (act === 'all') { visible().forEach(function (c) { sel.add(cands.indexOf(c)); }); redraw(); }
+    else if (act === 'none') { sel.clear(); redraw(); }
+    else if (act === 'reset') { k = 1; tx = 0; ty = 0; applyTransform(); build(); }
+    else if (act === 'undo') { undo(); }
+    else if (act === 'draw') {
+      // 누르면 켜고 다시 누르면 끈다 — 켜 놓고 잊는 것이 가장 흔한 실수다.
+      if (drawing) drawCancel(); else drawStart();
+    }
+    else if (act === 'ghosts') {
+      showGone = !showGone;
+      e.target.textContent = showGone ? '삭제분 숨기기' : '삭제분 보기';
+      build();
+    }
+    else if (act === 'clear') {
+      if (!removed.size && !accepted.size) { saveState.textContent = '검토 기록이 없습니다'; return; }
+      if (!confirm('이 시야의 검토 기록(삭제 ' + removed.size +
+                   ', 복구 ' + accepted.size + ')을 모두 지울까요?')) return;
+      removed.clear(); accepted.clear(); sel.clear(); history.length = 0;
+      save();
+      // 되살린 개체를 목록에서 빼려면 서버 상태를 다시 받아야 한다.
+      setTimeout(function () { location.reload(); }, 500);
+    }
+  }
+
+  tools.addEventListener('click', onTool);
+  if (drawTool) drawTool.addEventListener('click', onTool);
+
+  // --- 검토 완료 -----------------------------------------------------------
+  // 교정이 하나도 없어도 켤 수 있어야 한다 — 고칠 것이 없는 시야와 아직 보지
+  // 않은 시야는 다르고, 그 차이가 재현율 실측과 학습 데이터 선별의 근거다.
+  function paintDone() {
+    if (!doneBtn) return;
+    doneBtn.classList.toggle('on', reviewDone);
+    doneBtn.textContent = reviewDone ? '✓ 검토 완료됨' : '검토 완료';
+    doneBtn.title = reviewDone
+      ? '검토를 마친 시야다 — 누르면 완료를 해제한다 (확인을 묻는다)'
+      : '이 시야를 다 봤다고 표시한다 (review/*.json 에 남는다)';
+  }
+  if (doneBtn) {
+    doneBtn.addEventListener('click', function () {
+      // 해제는 한 번 더 묻는다 — 잘못 눌러 풀리면 "다 본 시야"라는 표시가
+      // 조용히 사라지고, 그것이 학습 데이터 선별의 근거이기 때문이다.
+      if (reviewDone && !confirm('이 시야의 검토 완료 표시를 해제할까요?')) return;
+      // **완료는 판의 저장을 안 탄다** (116 덧 · 실사용 2026-08-13 · g028).
+      //
+      // 예전에는 `save()` 로 보냈다 — 판 payload 에 `done` 을 얹어서. 그런데
+      // 그 길에는 **아무것도 안 보내고 돌아가는 갈래**가 있다(`previewing` ·
+      // 074): 커서가 캐러셀의 판 위에 남은 채 눌리면 눌린 것을 버리는데,
+      // 아래에서 이미 켜고 칠한 버튼만 남아 **화면은 완료인데 서버는 요청을
+      // 못 받는** 상태가 됐다. 실패 띠도 안 뜬다(실패한 요청이 없으니까).
+      // 실사용에서 시야 하나의 완료 표시가 그렇게 사라졌다.
+      //
+      // 미리보기를 걷고 그 길로 보내는 것으로는 못 막는다 — **검출이 없는
+      // 판**을 고르면 되돌릴 상태가 아예 없고, 그때 저장은 대표 이미지로 가서
+      // **그 판의 교정을 지운다**(사본에서 재현했다. 그때는 깊이 맵이었고,
+      // 123 뒤로는 그 묶음에 검출이 없는 프레임이 그 자리다).
+      //
+      // 완료는 **시야에 붙는 표시**다. 판의 교정과 함께 보낼 이유가 없고,
+      // 따로 보내면 어느 판을 고르고 있든 상관이 없어진다.
+      var on = !reviewDone;
+      reviewDone = on;
+      paintDone();
+      postDone(on).then(function (ok) {
+        if (!ok) {
+          // **못 갔으면 화면도 되돌린다.** 켜진 채로 두면 116 이 잡은 그
+          // 상태가 그대로 남는다 — 화면은 완료인데 DB 는 모른다. 실패 띠는
+          // `postDone` 이 세워 두었고, 사람은 다시 누르면 된다.
+          reviewDone = !on;
+          paintDone();
+          return;
+        }
+        if (!on) return;
+        // 완료로 표시했으면 곧바로 다음 시야로 넘어간다 — 검토는 연달아 하는
+        // 일이고, 누른 사람의 뜻이 분명하므로 묻지 않는다. **판에 안 보낸
+        // 교정이 남아 있으면 `leave()` 가 그것을 먼저 밀어낸다.**
+        var url = strip && strip.dataset.next;
+        if (url) leave(url);
+        else flashNote('마지막 시야입니다 — 검토 완료로 표시했습니다');
+      });
+    });
+    paintDone();
+  }
+
+  // Ctrl+Z / Cmd+Z — 입력란에 포커스가 있을 때는 가로채지 않는다.
+  document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+    var t = document.activeElement;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    e.preventDefault();
+    undo();
+  });
+
+  // --- 탭 ------------------------------------------------------------------
+  var tabs = document.getElementById('tabs-' + uid);
+  tabs.addEventListener('click', function (e) {
+    var name = e.target.dataset && e.target.dataset.pane;
+    if (!name) return;
+    tabs.querySelectorAll('button[data-pane]').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.pane === name);
+    });
+    // id 로 짚는다 — 형제 선택자를 쓰면 한 페이지에 패널이 둘 이상일 때
+    // 뒤따르는 다른 패널의 섹션까지 같이 여닫힌다.
+    ['view', 'list'].forEach(function (n) {
+      var s = document.getElementById('pane-' + n + '-' + uid);
+      if (s) s.hidden = (n !== name);
+    });
+    // 숨겨져 있는 동안은 clientWidth 가 0 이라 스케일바도 배율도 못 잰다.
+    if (name === 'view') applyTransform();
+  });
+
+  // --- 검출 엔진 고르기 -----------------------------------------------------
+  // 주소만 바꿔 같은 시야를 다시 연다. 개체 자료는 검출마다 폴리곤까지 딸려
+  // 있어(시야당 29 KB) 판마다 미리 실어 두면 무거워지고, 무엇보다 **교정을
+  // 얹을지 말지가 검출마다 다르다** — 서버가 그리게 두는 편이 안전하다.
+  var engPick = document.getElementById('engpick-' + uid);
+  if (engPick) {
+    // 떠나지 못했을 때 되돌릴 자리 (아래 `leave` 주석).
+    var engPrev = engPick.querySelector('input[type=radio]:checked');
+    // 라디오 하나하나가 아니라 감싼 칸에서 받는다 — 엔진이 늘어도 배선을
+    // 손대지 않는다.
+    engPick.addEventListener('change', function (e) {
+      var t = e.target;
+      if (!t || t.type !== 'radio' || !t.value) return;
+      // **`leave()` 로 간다** (116 덧). 여기도 지연 저장을 밀어내고 떠나는
+      // 자리인데 약속을 안 기다리고 있었다 — 116 이 `leave()` 에서 고친 것과
+      // 같은 갈래다. 규칙이 둘이 되지 않게 같은 문으로 보낸다.
+      //
+      // **안 떠났으면 고른 표시도 되돌린다.** 저장이 실패해 화면은 남았는데
+      // 라디오만 옮겨 가 있으면, 지금 보고 있는 것이 어느 엔진인지가 화면에서
+      // 갈린다 — 그 상태로 검토하면 남의 엔진 것을 이 엔진으로 읽는다.
+      leave(t.value).then(function (gone) {
+        if (!gone && engPrev) engPrev.checked = true;
+        else engPrev = t;
+      });
+    });
+  }
+
+  // --- 링크가 짚어 온 개체를 찾아 표시한다 (DiaRUGA 118) ----------------------------
+  var hlFlag = document.getElementById('hlflag-' + uid);
+  var hlText = document.getElementById('hltext-' + uid);
+  var hlBtn = document.getElementById('hlzoom-' + uid);
+  var HL_IN = '이 개체로 ⤢', HL_OUT = '전체 보기 ⤡';
+
+  function hlSay(text, bad) {
+    if (!hlFlag) return;
+    hlText.textContent = text;
+    hlFlag.classList.toggle('bad', !!bad);
+    hlFlag.hidden = false;
+  }
+
+  // **사람이 자기 일을 시작하면 표시를 걷는다.** 계속 깜빡이면 검토하는 내내
+  // 눈이 그리로 끌리고, 무엇보다 **골라 둔 개체(`.sel`)와 헷갈린다** — 표시는
+  // "여기 있다" 고 한 번 말하는 것이지 상태가 아니다.
+  //
+  // **배율은 안 되돌린다.** 확대는 사람이 눌러서 한 일이라 여기서 걷으면 방금
+  // 정한 것을 빼앗는다 — 되돌리는 길은 도구줄의 `배율 초기화` 에 이미 있다.
+  function clearHighlight() {
+    if (!hlKey) return;
+    hlKey = '';
+    els.forEach(function (el) { el.classList.remove('hl'); });
+    if (hlFlag) hlFlag.hidden = true;
+    if (hlBtn) hlBtn.hidden = true;
+  }
+
+  // --- 이 개체로 (센터 + 확대) ---------------------------------------------
+  //
+  // **누를 때만 움직인다.** 도착하자마자 배율을 올리면 사람이 정하지 않은
+  // 배율에서 화면이 시작되고, 그 상태가 "지금 어디를 보고 있나" 를 한 번 더
+  // 물어보게 만든다. 큰 개체는 표시만으로 충분해서 아예 안 누르는 길도 있어야
+  // 한다 (사용자 2026-08-13).
+  var hlZoomed = false;
+
+  function zoomToHl() {
+    var i = findHl();
+    if (i < 0) return;
+    var b = cands[i].bbox_xywh;
+    // `canvas` 는 변환 전 자리다(`offset*`) — `getBoundingClientRect` 는 지금
+    // 배율이 이미 곱해져 있어 이 계산에 못 쓴다. `transform-origin: 0 0` 이라
+    // 화면좌표 = 이동 + 캔버스좌표 × 배율 이다.
+    // **재는 것은 사진의 상자다** (DiaRUGA 192) — 좁은 화면에서는 도구·레이어 줄이
+    // `.detview` 안 흐름에 들어와 바깥 상자가 사진보다 크다. 그 상자로 재면
+    // 개체가 화면 가운데가 아니라 **도구까지 포함한 가운데**로 온다.
+    var vb = canvasBox();
+    var vw = vb.w, vh = vb.h;
+    var cw = vw, ch = vh;
+    if (!vw || !vh) return;
+
+    // **개체가 화면의 절반쯤을 차지하게 한다.** 꽉 채우면 개체만 남아 "무엇
+    // 옆에 있는 것인가" 가 안 읽힌다 — 검토는 주위를 함께 보는 일이다.
+    var TARGET = 0.5;
+    var kw = TARGET * vw / Math.max(1, b[2] / W * cw);
+    var kh = TARGET * vh / Math.max(1, b[3] / H * ch);
+    // **원본 화소를 넘겨 늘리지 않는다.** 화면에 띄운 것은 축소본이라 그 위로
+    // 확대하면 없는 화소를 만들어 보여 주는 셈이고, 그것으로 areolae 를
+    // 판단하면 안 된다(`zoomPct` 머리말). 더 보고 싶으면 휠이 있다.
+    var kMax = Math.min(12, W / vw);
+    var nk = Math.max(1, Math.min(kMax, kw, kh));
+
+    k = nk;
+    tx = vw / 2 - (b[0] + b[2] / 2) / W * cw * k;
+    ty = vh / 2 - (b[1] + b[3] / 2) / H * ch * k;
+    clampPan();
+    applyTransform();
+    maybeHiRes();
+    hlZoomed = true;
+    if (hlBtn) hlBtn.textContent = HL_OUT;
+  }
+
+  function hlZoomOut() {
+    k = 1; tx = 0; ty = 0;
+    applyTransform();
+    maybeHiRes();
+    hlZoomed = false;
+    if (hlBtn) hlBtn.textContent = HL_IN;
+  }
+
+  if (hlBtn) {
+    // **누름이 사진까지 내려가면 안 된다.** 아래에서 선택·이동이 받고, 무엇보다
+    // `clearHighlight` 가 표시를 걷어 **버튼이 자기를 누른 손에 사라진다.**
+    // 레이어 토글이 같은 자리에서 같은 일을 한다(`.layers`).
+    ['mousedown', 'wheel', 'contextmenu'].forEach(function (ev) {
+      hlBtn.addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+    hlBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (hlZoomed) hlZoomOut(); else zoomToHl();
+    });
+  }
+
+  function findHl() {
+    for (var i = 0; i < cands.length; i++) {
+      if (keyOf(cands[i]) === hlKey) return i;
+    }
+    return -1;
+  }
+
+  function gotoHighlight() {
+    if (!hlKey) return;
+    // **그 개체가 있는 판으로 옮긴다.** 시야 하나에 판이 여럿이고(합성본 +
+    // 프레임마다 하나) 개체는 그중 한 판의 것이다 — 프레임에서 잡힌 개체를
+    // 합성본에서 찾으면 없다.
+    if (shotDets && hlImage) {
+      var want = -1;
+      shots.forEach(function (s, i) {
+        var d = shotDets[s.dataset.detkey];
+        if (d && String(d.image) === hlImage) want = i;
+      });
+      if (want >= 0 && want !== current) commit(want, true);
+    }
+    // 표시 자체는 `build()` 가 키로 얹는다. 여기서 보는 것은 **있는가** 뿐이다.
+    if (findHl() < 0) {
+      // **말없이 지나가지 않는다.** 표시가 없는 화면과 원래 표시가 없는 화면이
+      // 똑같이 생겨서, 사람은 이 시야를 계속 훑는다. 실제로 없을 수 있다 —
+      // 재검출로 키가 바뀌었거나 그 사이 지운 개체다.
+      hlSay('짚어 온 개체를 이 화면에서 찾지 못했습니다 — 그 사이 검출이 다시 돌았을 수 있습니다', true);
+      hlKey = '';
+      return;
+    }
+    hlSay('눌러서 오신 개체입니다 · 화면을 누르면 표시가 사라집니다');
+    if (hlBtn) {
+      hlBtn.textContent = HL_IN;
+      hlZoomed = false;
+      hlBtn.hidden = false;
+    }
+  }
+
+  // **캡처 단계로 받는다** — 선택·그리기 같은 아래쪽 처리가 무엇을 하든 표시는
+  // 걷힌다. 여기서 막거나 고치는 것은 없어 아래 처리와 부딪히지 않는다.
+  //
+  // **알림 줄은 비켜 간다.** 캡처는 위에서 아래로 내려오므로 버튼이 제 손으로
+  // `stopPropagation` 을 해도 이미 늦다 — 여기서 안 걷어야 **버튼이 자기를
+  // 누른 손에 사라지는** 일이 없다.
+  view.addEventListener('mousedown', function (e) {
+    if (e.target && e.target.closest && e.target.closest('.hlflag')) return;
+    clearHighlight();
+  }, true);
+
+  applyTransform();
+  build();
+  catFill();
+
+  // --- 이전 시야로 거슬러 왔으면 그 시야의 마지막 사진에서 시작한다 ----------
+  // **반드시 여기여야 한다 — 초기화가 다 끝난 뒤다.**
+  //
+  // 원래는 캐러셀을 만드는 자리(위쪽)에 있었는데, `commit()` 이 `swapDet()` 을
+  // 거쳐 `build()` 를 부르고 `build()` 는 `polys`(이 파일 한참 아래에서
+  // `var polys = []` 로 만들어진다)를 훑는다. `var` 는 끌어올려지지만 값은
+  // `undefined` 라 `polys.forEach` 가 TypeError 를 냈고, **예외가 IIFE 를 뚫고
+  // 나가면서 그 아래 초기화가 통째로 안 돌았다** — 사진과 캡션은 맞는데 개체가
+  // 하나도 안 그려지는 화면이 됐다.
+  //
+  // 검토 화면(`/d/`)은 멀쩡했다. 거기는 `shotDets` 가 없어 `swapDet()` 이 첫
+  // 줄에서 빠져나가 `build()` 를 아예 안 부르기 때문이다. **엔진 화면에서만
+  // 나는 고장**이라 오래 안 보였다.
+  //
+  // 교훈: 초기화 도중에 "다 만들어진 뒤에야 되는 일" 을 끼워 넣지 않는다.
+  if (window.__diarugaActive === uid && shots.length &&
+      /[?&]shot=last(&|$)/.test(location.search)) {
+    commit(shots.length - 1, true);
+    // 새로고침에서 다시 튀지 않게 주소만 정리한다.
+    // window. 를 붙여야 한다 — 이 스코프의 history 는 교정 이력 배열이다.
+    //
+    // **`shot=last` 만 걷어낸다.** 예전에는 `location.pathname` 으로 갈아치워
+    // 쿼리를 통째로 버렸다. 그때는 쿼리가 이것뿐이라 티가 안 났는데, 검토
+    // 화면이 `?batch=` 로 엔진을 들고 다니게 되자(DiaRUGA 051) **이전 시야로 거슬러
+    // 갈 때마다 고른 엔진이 조용히 현재 검출로 돌아갔다.**
+    if (window.history && window.history.replaceState) {
+      var q = location.search.replace(/([?&])shot=last(&|$)/,
+        function (m, head, tail) { return tail ? head : ''; });
+      if (q === '?') q = '';
+      window.history.replaceState(null, '', location.pathname + q + location.hash);
+    }
+  }
+
+  // **여기여야 한다 — 초기화가 다 끝난 뒤다.** 위 `shot=last` 와 같은 이유로,
+  // 판을 옮기는 길(`commit`)이 `swapDet`·`build` 를 거친다.
+  //
+  // 주소는 그대로 둔다. `shot=last` 는 새로고침에서 다시 튀면 안 되는 **동작**
+  // 이라 걷어냈지만, 이것은 **이 주소가 무엇을 가리키는가** 다 — 걷어내면
+  // 새로고침하거나 링크를 다시 열었을 때 표시가 안 뜬다.
+  gotoHighlight();
+};
+</script>

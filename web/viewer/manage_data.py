@@ -320,16 +320,55 @@ def create_batch(form) -> tuple[bool, str]:
         # 사람이 다시 보는 것이 맞고, 물려주면 경고가 영영 따라다닌다.
         recipe.pop("weights_guessed", None)
 
+    # **카탈로그 코드** (`catalog.py` · DiaRUGA P16). 비면 `batch_code_seed` 가 낸
+    # 첫 제안을 앉힌다 — DiaRUGA 는 마이그레이션이 심고 화면에 자리가 없었다.
+    # 번호는 논문에 적히는 것이라 **정하는 것은 사람**이고, 여기서는 자리를 준다
+    ok, code_or_msg = _clean_batch_code(form.get("code"), seed_from=label)
+    if not ok:
+        return False, code_or_msg
     b = RunBatch.objects.create(kind="detect", label=label,
                                 note=(form.get("note") or "").strip(),
-                                recipe=recipe)
-    tail = ""
+                                recipe=recipe, code=code_or_msg)
+    tail = f" 카탈로그 코드 {b.code}."
     if src is not None:
         tail = f" ({src.label} 의 조리법을 베꼈습니다)"
     if not recipe:
         tail += " 조리법이 비어 있어 아직 자동으로 돌지 않습니다."
     return True, (f"묶음 {b.label} 을 만들었습니다.{tail} "
                   f"이미 있는 슬라이드는 사람이 한 번 돌려야 합니다.")
+
+
+def _clean_batch_code(raw, *, seed_from="") -> tuple[bool, str]:
+    """묶음의 카탈로그 코드 — 비면 라벨에서 첫 제안(`catalog.batch_code_seed`)."""
+    from . import catalog
+    code = (raw or "").strip().upper()
+    if not code and seed_from:
+        code = catalog.batch_code_seed(seed_from)
+    if not code:
+        return True, ""
+    if code == catalog.MANUAL_CODE:
+        return False, f"{catalog.MANUAL_CODE} 은 사람이 그린 개체의 자리입니다 — 다른 코드를."
+    if len(code) > 8 or not code.isalnum():
+        return False, "코드는 영문·숫자 여덟 자 안이어야 합니다."
+    if RunBatch.objects.filter(code=code).exists():
+        return False, f"코드 {code} 는 다른 묶음이 쓰고 있습니다."
+    return True, code
+
+
+def set_batch_code(batch_id: int, raw) -> tuple[bool, str]:
+    """묶음의 카탈로그 코드를 고친다. **번호가 이미 적힌 뒤에는 바꾸지 말 것** —
+    화면이 그것을 적는다(개체가 있는 묶음은 경고)."""
+    b = RunBatch.objects.filter(pk=batch_id).first()
+    if b is None:
+        return False, "묶음을 찾지 못했습니다."
+    ok, code = _clean_batch_code(raw)
+    if not ok:
+        return False, code
+    if code == b.code:
+        return True, "그대로입니다."
+    b.code = code
+    b.save(update_fields=["code"])
+    return True, f"{b.label} 의 카탈로그 코드를 {code or '(없음)'} 으로 적었습니다."
 
 
 def set_recipe(batch_id: int, form) -> tuple[bool, str]:

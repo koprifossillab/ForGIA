@@ -83,3 +83,46 @@ def mask_points(c):
     """개체 dict 의 폴리곤 → SVG `points`. 규칙은 `data.mask_points` 하나다."""
     from viewer import data
     return data.mask_points(c)
+
+
+# --- 분류 (DiaRUGA 그대로 · 3단계) -------------------------------------------------
+@register.filter
+def cls_label(value):
+    """분류 키 -> 사람이 읽는 이름. 정의는 data.CLASS_LABELS 한곳에 있다."""
+    from viewer import data
+    return data.CLASS_LABELS.get(value, "")
+
+
+@register.filter
+def cls_short(value):
+    """분류 키 -> 약칭. 자리가 좁은 곳에서 쓴다 (없으면 전체 이름)."""
+    from viewer import data
+    return data.CLASS_SHORT.get(value, "")
+
+
+@register.filter
+def cls_badge(value):
+    from viewer import data
+    return data.CLASS_BADGE.get(value, "")
+
+
+@register.simple_tag
+def class_list():
+    """분류 목록. {% class_list as classes %} 로 받아 쓴다."""
+    from viewer import data
+    return data.class_list()
+
+
+@register.simple_tag
+def hotkey_groups():
+    """단축키 안내용. {% hotkey_groups as hotkeys %} 로 받아 쓴다."""
+    from viewer import data
+    return data.hotkey_groups()
+
+
+@register.simple_tag
+def class_json():
+    """클라이언트가 메뉴를 만들 때 쓰는 분류 정의."""
+    from viewer import data
+    text = json.dumps(data.class_list(), ensure_ascii=False)
+    return mark_safe(text.replace("<", "\\u003c"))

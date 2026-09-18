@@ -716,6 +716,819 @@
     padding: 10px 14px; margin: 14px 0; font-size: 13px;
   }
 
+  /* --- 3단계: 검토 화면 (DiaRUGA v0.29.0 base.html 1227~2027) --- 탭·사진+오른쪽
+     칸·개체 카탈로그 칸·검출 레이어·읽기 전용·짚은 개체·도구·그리기·완료·레이어
+     토글·스케일바·캐러셀·탈락 후보·묶기 팝업·띠. 분류 색만 ForGIA 의 넷으로. --- */
+  /* --- 탭 (검출 화면 / 개체 목록) --- */
+  .dettabs {
+    display: flex; gap: 2px; align-items: center; flex-wrap: wrap;
+    margin: 0 0 8px; border-bottom: 1px solid var(--line);
+  }
+  /* 한 페이지에 패널이 둘 이상일 때(합성본이 없어 프레임마다 검출한 그룹)만
+     위에 간격을 준다. 첫 패널은 사진이 곧바로 나와야 한다. */
+  section ~ .dettabs { margin-top: 22px; }
+  .dettabs button {
+    font: inherit; font-size: 13.5px; padding: 7px 15px; cursor: pointer;
+    background: transparent; color: var(--dim); border: 0;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .dettabs button:hover { color: var(--fg); }
+  .dettabs button.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+  .dettabs .tabmeta { margin-left: auto; font-size: 12px; color: var(--dim); padding-bottom: 6px; }
+  /* 검출 엔진 고르기. 탭 이름 바로 옆이다 — "무엇을 보고 있는가" 와 "무엇으로
+     검출한 것인가" 는 함께 읽혀야 한다.
+
+     **라디오다.** 닫힌 드롭다운은 고른 것만 보여준다 — 다른 엔진이 몇 개를
+     잡았는지와 그쪽이 읽기 전용이라는 것은 열어 봐야 안다. 그런데 **그 수를
+     비교하는 것이 엔진을 바꾸는 이유**다. 고르지 않은 쪽도 함께 보여야 한다 (DiaRUGA 051). */
+  .dettabs .engpick {
+    display: flex; align-items: center; gap: 4px;
+    margin: 0 4px 6px 10px; padding-bottom: 0;
+  }
+  .dettabs .engpick label {
+    display: flex; align-items: center; gap: 5px; cursor: pointer;
+    font-size: 12px; line-height: 1.2; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--dim);
+  }
+  .dettabs .engpick label:hover { border-color: var(--accent); }
+  /* 고른 것은 확실히 켜져 보여야 한다 — 라디오 점 하나로는 약하다 */
+  .dettabs .engpick label:has(input:checked) {
+    border-color: var(--accent); color: var(--fg); font-weight: 600;
+  }
+  .dettabs .engpick input { margin: 0; cursor: pointer; accent-color: var(--accent); }
+  .dettabs .engpick .n { font-weight: 400; color: var(--dim); font-size: 11px; }
+  /* 읽기 전용인 엔진임을 칸에서도 알린다. 사진 가운데 위의 큰 표시와 같은 빨강 */
+  .dettabs .engpick .ro {
+    font-weight: 400; font-size: 10.5px; color: #ff8a8a;
+    border-left: 1px solid var(--line); padding-left: 6px;
+  }
+
+  /* --- 사진 + 오른쪽 칸 --- */
+  .detrow { display: flex; gap: 10px; align-items: flex-start; }
+  .detrow .detview { flex: 1 1 auto; min-width: 0; }
+  /* 화면 조정과 **개체 카탈로그**가 든다 (DiaRUGA 183). 예전에는 아래가 시야 메모
+     상자였는데, 570 시야에 6건이라 걷고 그 자리를 고른 개체의 카드에 줬다 —
+     개체를 두고 하는 말은 원래 카탈로그에서 적기로 한 것이고(0036), 그 칸이
+     이제 검토하는 자리로 왔다. */
+  .notes {
+    flex: 0 0 250px; width: 250px; align-self: stretch;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 9px 10px; line-height: 1.5;
+    max-height: 78vh; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .notes .nhead, .notes .ghead {
+    flex: 0 0 auto;
+    font-size: 12px; font-weight: 650; margin-bottom: 7px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line);
+  }
+  .notes .ghead { margin-top: 9px; }
+  /* 화면 조정 — 밝기·대비. 코멘트 목록보다 위에 두되 자리를 조금만 쓴다 */
+  .notes .adjhead { display: flex; align-items: baseline; gap: 7px; }
+  .notes .adjreset {
+    margin-left: auto; font: inherit; font-size: 11px; font-weight: 400;
+    padding: 1px 7px; border-radius: 5px; cursor: pointer;
+    background: transparent; color: var(--dim); border: 1px solid var(--line);
+  }
+  .notes .adjreset:hover { color: inherit; border-color: var(--accent); }
+  /* 켜져 있으면 눈에 띄어야 한다 — 원본과 다르게 보고 있다는 표시다 */
+  .notes .adjreset.on { color: var(--accent); border-color: var(--accent); }
+  /* 접었다 편다 (DiaRUGA 194). 폰에서는 접힌 채로 시작한다 — `_detview_js.html` 이
+     화면 폭을 보고 정한다. 요약에 지금 값이 적히므로 접혀 있어도 켜진 것을
+     안다(`.adjnow`). */
+  .notes .adjbox { flex: 0 0 auto; }
+  .notes .adjbox > summary { list-style: none; cursor: pointer; }
+  .notes .adjbox > summary::-webkit-details-marker { display: none; }
+  .notes .adjbox > summary::after {
+    content: '▾'; margin-left: auto; font-size: 10px; opacity: .55;
+  }
+  .notes .adjbox:not([open]) > summary::after { content: '▸'; }
+  .notes .adjnow { font-weight: 400; font-size: 11px; color: var(--accent); }
+  .notes .adj { flex: 0 0 auto; margin-bottom: 11px; }
+  /* 되돌리기가 머리줄에서 판 안으로 내려왔다 (DiaRUGA 194) — `margin-left:auto` 는
+     그때 flex 머리줄의 것이라 여기서는 뜻이 없다 */
+  .notes .adj .adjreset { margin-left: 0; margin-top: 3px; }
+  .notes .adj label {
+    display: block; font-size: 11.5px; color: var(--dim); margin-bottom: 5px;
+  }
+  .notes .adj input[type=range] {
+    display: block; width: 100%; margin-top: 2px; accent-color: var(--accent);
+  }
+  /* --- 개체 카탈로그 칸 (DiaRUGA 183) ---
+     고른 개체 하나의 카드를 여기 그린다. 여기 있던 시야 메모 상자를 걷은
+     자리다. **칸이 250px 라 카탈로그 화면의 카드보다 좁다** — 이름표를 왼쪽에
+     붙이고 값이 남는 자리를 다 쓴다.
+     남는 자리를 스스로 채우고(`flex: 1 1 auto`) 넘치면 여기서만 구른다 —
+     `.notes` 는 `overflow: hidden` 이라 안 그러면 아래 칸이 잘린다. */
+  .notes .catpane {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .notes .catsay { font-size: 11.5px; color: var(--dim); line-height: 1.6; }
+  /* 열을 `minmax(0, 1fr)` 로 못 박는다 (ForGIA). 기본 `auto` 열은 안의 가장 넓은
+     줄(등급·자세 셀렉트 둘 + 이름표)에 맞춰 커져서 칸 밖으로 넘치고, 그때 칸이
+     가로로 굴러 이름표의 첫 글자가 잘렸다 — 자세 이름이 DiaRUGA 보다 길다 */
+  .notes .catbox { display: grid; gap: 6px; align-content: start;
+                   grid-template-columns: minmax(0, 1fr); }
+  /* **`display` 를 잡았으니 `[hidden]` 을 명시한다.** 브라우저 기본
+     `[hidden] { display: none }` 은 특이도 (0,0,1) 이라 위 규칙(0,2,0)에 진다 —
+     감추라고 해 놓고 그대로 보인다. `.tile`·`.hlflag` 에 이어 세 번째다. */
+  .notes .catbox[hidden] { display: none; }
+  /* 번호는 옮겨 적는 것이라 **글자가 안 붙는 폭**으로 둔다. 좁아서 줄바꿈
+     대신 가로로 구르게 한다 — 끊어 적으면 다른 번호로 읽힌다. */
+  .notes .catno {
+    display: flex; align-items: baseline; gap: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; color: var(--fg);
+  }
+  .notes .catno .v {
+    flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap;
+    scrollbar-width: none;
+  }
+  .notes .catno .v::-webkit-scrollbar { display: none; }
+  .notes .catno .nofrom {
+    flex: none; font-family: inherit; font-size: 10.5px; color: var(--dim);
+  }
+  /* 아직 카드가 없거나 번호를 못 만든 자리 — 번호처럼 안 보여야 한다 */
+  .notes .catno.none {
+    font-family: inherit; font-size: 11px; color: var(--warn);
+    line-height: 1.5;
+  }
+  .notes .crow { display: flex; gap: 6px; align-items: center; }
+  /* 등급·자세 줄은 파편일 때 감춘다 — `display: flex` 가 `[hidden]` 을 이기므로
+     여기서 명시한다 (`.catbox[hidden]` 과 같은 줄). */
+  .notes .crow[hidden] { display: none; }
+  .notes .crow > label {
+    flex: none; width: 3.2em; font-size: 11.5px; color: var(--dim);
+  }
+  .notes .crow input[type=text],
+  .notes .crow select,
+  .notes .crow textarea {
+    flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12px;
+    background: var(--bg); color: inherit;
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px;
+  }
+  .notes .crow textarea { resize: vertical; min-height: 2.6em; line-height: 1.5; }
+  /* 등급·자세는 한 줄에 둘이라 이름표가 값 사이에 낀다 */
+  .notes .crow.gp select { flex: 1 1 0; }
+  .notes .crow.gp > label.l2 { width: auto; margin-left: 2px; }
+  .notes .crow input:focus,
+  .notes .crow select:focus,
+  .notes .crow textarea:focus { outline: none; border-color: var(--accent); }
+  /* **잠긴 칸은 잠긴 것으로 보여야 한다** (DiaRUGA 051) — 읽기 전용 화면과 지운
+     개체에서 그렇다. 눌러도 아무 일이 없는 칸이 멀쩡해 보이면 안 된다. */
+  .notes .crow input[disabled],
+  .notes .crow select[disabled],
+  .notes .crow textarea[disabled] { opacity: .55; cursor: not-allowed; }
+  .notes .catmeta {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+    font-size: 11px; color: var(--dim);
+  }
+  .notes .catmeta .tocard { margin-left: auto; color: var(--accent); }
+  /* 저장 결과 한 줄. 실패는 색으로도 말한다 — 회색 한 줄은 지나간다(DiaRUGA 051). */
+  .notes .catstate { font-size: 11px; color: var(--dim); min-height: 1.3em; }
+  .notes .catstate.warn { color: var(--warn); }
+
+  /* --- 대화형 검출 레이어 --- */
+  .detview {
+    position: relative; display: block; line-height: 0;
+    border: 1px solid var(--line); border-radius: 9px; overflow: hidden;
+    background: #000; user-select: none; cursor: crosshair;
+  }
+  .detview .canvas { transform-origin: 0 0; will-change: transform; }
+  .detview img { width: 100%; display: block; }
+  /* instance mask — 이미지 위에 겹치되 마우스는 통과시킨다 (히트 판정은 bbox 가 한다) */
+  .detview svg.masks {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .detview svg.masks polygon { stroke-width: 0; }
+  /* 탈락 후보 — 테두리만 빨간 점선으로 그린다. 채우면 사진이 가려져 정작
+     "이게 개체인가" 를 판단할 수 없다. 두께·점선 간격은 확대해도 그대로다. */
+  .detview svg.masks polygon.reject {
+    fill: none; stroke: rgba(255,70,70,.92);
+    stroke-width: 1.4px; stroke-dasharray: 5 4;
+    vector-effect: non-scaling-stroke;
+  }
+  .detview.hide-reject svg.masks polygon.reject { display: none; }
+  /* 분류 색 — `ClassDef.color` 와 같다 (migrations/0004). 아래 배지·표지 마스크와 한 벌 */
+  .detview svg.masks polygon.foram { fill: rgba(196,181,253,.42); }
+  .detview svg.masks polygon.broken { fill: rgba(255,180,84,.42); }
+  .detview svg.masks polygon.fragment { fill: rgba(150,140,190,.42); }
+  .detview svg.masks polygon.other { fill: rgba(130,130,130,.42); }
+  .detview svg.masks polygon.manual { fill: rgba(255,180,70,.42); }
+  .detview svg.masks polygon.none   { fill: rgba(255,60,60,.30); }
+  .detview svg.masks polygon.sel    { fill: rgba(255,210,63,.55); }
+  /* **그리는 중의 폴리곤** (DiaRUGA P09 3단계). 아직 개체가 아니므로 분류 색을 안 쓴다 —
+     색은 "무엇인가" 를 말하는 자리다(DiaRUGA 039). 흰 선과 점으로만 그린다.
+
+     `vector-effect: non-scaling-stroke` 와 고정 반지름이라 **확대해도 손맛이
+     같다** — 확대하면 점이 커져 첫 점을 못 누르는 일이 없다. */
+  .detview svg.masks g.drawing polyline {
+    fill: none; stroke: rgba(255,255,255,.95); stroke-width: 1.6px;
+    stroke-dasharray: 6 4; vector-effect: non-scaling-stroke;
+  }
+  .detview svg.masks g.drawing circle {
+    fill: rgba(255,255,255,.9); stroke: rgba(0,0,0,.55);
+    stroke-width: 1px; vector-effect: non-scaling-stroke;
+  }
+  /* **마지막 점에서 커서까지** (DiaRUGA 082). 찍힌 변보다 옅고 촘촘한 점선이라 "아직
+     안 찍은 것" 으로 읽힌다 — 굵기까지 같으면 이미 그린 변과 구별이 안 된다. */
+  .detview svg.masks g.drawing polyline.rubber {
+    stroke: rgba(255,255,255,.6); stroke-width: 1.2px; stroke-dasharray: 3 3;
+  }
+  /* 지금 닫으면 생길 변. 더 옅다 — 눌러야 생기는 것이지 따라오는 것이 아니다. */
+  .detview svg.masks g.drawing polyline.rubber.close {
+    stroke: rgba(90,200,250,.45); stroke-dasharray: 2 5;
+  }
+  /* 첫 점 — 여기를 다시 누르면 닫힌다. 크기와 색으로 그것을 말한다. */
+  .detview svg.masks g.drawing circle.first {
+    fill: rgba(90,200,250,.95); stroke: rgba(255,255,255,.9);
+  }
+  /* 그리는 중에는 커서가 달라야 한다 — 클릭이 선택이 아니라 점 찍기다.
+     **클래스가 `.detview` 자신에 붙는다** (`#dv-<uid>`) — `.detview .view` 로
+     적으면 그런 요소가 없어 아무 일도 안 일어난다. */
+  .detview.drawing, .detview.drawing .canvas, .detview.drawing img { cursor: crosshair; }
+  .detview .tools button.on { border-color: var(--accent); color: var(--accent); }
+  /* fill 을 끄면 마스크를 테두리만 그린다. 채운 색을 그대로 선으로 옮기되
+     불투명하게 올린다 — 얇은 선은 반투명하면 잘 안 보인다.
+     두께는 non-scaling-stroke 라 확대해도 화면에서 같게 보인다. */
+  .detview.hide-fill svg.masks polygon:not(.reject) {
+    fill: none; stroke-width: 1.6px; vector-effect: non-scaling-stroke;
+  }
+  .detview.hide-fill svg.masks polygon.foram { stroke: rgba(196,181,253,.95); }
+  .detview.hide-fill svg.masks polygon.broken { stroke: rgba(255,180,84,.95); }
+  .detview.hide-fill svg.masks polygon.fragment { stroke: rgba(150,140,190,.95); }
+  .detview.hide-fill svg.masks polygon.other { stroke: rgba(130,130,130,.95); }
+  .detview.hide-fill svg.masks polygon.manual     { stroke: rgba(255,180,70,.95); }
+  .detview.hide-fill svg.masks polygon.none       { stroke: rgba(255,60,60,.9); }
+  .detview.hide-fill svg.masks polygon.sel        { stroke: rgba(255,210,63,1); stroke-width: 2.2px; }
+  /* 네 귀퉁이가 다 쓰인다: 좌상 교정 도구, 우상 레이어 토글, 우하 스케일바,
+     하단 가운데 검토 완료. 배율 표시는 남은 좌하단으로 뺀다. */
+  /* 배율은 원본 화소 기준이라 확대하지 않은 상태(예: 53%)도 뜻이 있는 값이다.
+     그래서 늘 보인다 — 지금 원본을 다 보고 있는지 알아야 한다. */
+  .detview .zoomtag {
+    position: absolute; left: 8px; bottom: 10px; z-index: 3;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 11px; line-height: 1.5;
+    padding: 2px 7px; border-radius: 5px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  /* --- 읽기 전용 표시 (사진 가운데 위) ---
+     교정이 안 되는 화면을 교정 화면으로 착각하면 한 시야를 통째로 헛본다.
+     좌상(도구)·우상(레이어)이 이미 찬 자리라 가운데로 온다 — 도구가 감춰져
+     있는 화면이므로 사진을 가리지도 않는다. 클릭은 통과시킨다: 이 표시 아래에
+     개체가 있으면 골라서 볼 수 있어야 한다. */
+  .detview .roflag {
+    position: absolute; left: 50%; top: 8px; z-index: 6;
+    transform: translateX(-50%); pointer-events: none; text-align: center;
+    padding: 6px 20px 7px; border-radius: 9px; line-height: 1.25;
+    font-size: 19px; font-weight: 700; letter-spacing: .6px;
+    background: rgba(0,0,0,.66); color: #ff5f5f;
+    border: 1px solid rgba(255,95,95,.75);
+  }
+  .detview .roflag span {
+    display: block; font-size: 11.5px; font-weight: 400; letter-spacing: 0;
+    color: #ffd9d9; margin-top: 2px;
+  }
+
+  /* --- 링크가 짚어 온 개체 (DiaRUGA 118) ---
+     카탈로그·크롭·계측 표에서 사진을 눌러 온 자리를 짚어 준다. 시야 하나에
+     개체가 수십 개라 표시가 없으면 그중 어느 것이었는지 다시 찾아야 했다.
+
+     **색을 테마에서 빌리지 않는다.** 여기 배경은 테마가 아니라 현미경 사진이다
+     (`.box.linked::after` 와 같은 자리, 107 과는 반대 방향). 청록은 분류 색
+     어디와도 안 겹친다 — 봉상(파랑)·원형(초록)·Eucampia(분홍)·수동복구(주황)·
+     선택(노랑)이 이미 자리를 잡고 있다.
+
+     **`outline` 이다 — `border` 가 아니다.** 테두리는 분류를 나타내는 자리라
+     덮어쓰면 그 개체가 무엇으로 판정됐는지가 화면에서 사라진다. 바깥에 한 겹
+     더 두르면 둘 다 읽힌다. bbox 레이어를 꺼도(`.hide-box`) 남는 것도 그래서다
+     — 표시는 레이어가 아니라 "지금 이것을 보러 왔다" 는 말이다.
+
+     두께에 `--inv`(=1/배율)를 곱한다 — 확대하면 선까지 같이 굵어진다. */
+  .detview .box.hl {
+    outline: calc(2.5px * var(--inv, 1)) solid rgba(0,229,255,.95);
+    outline-offset: calc(3px * var(--inv, 1));
+    animation: hlpulse 1.2s ease-in-out infinite;
+  }
+  @keyframes hlpulse {
+    0%, 100% { box-shadow: 0 0 calc(9px * var(--inv, 1)) calc(2px * var(--inv, 1)) rgba(0,229,255,.55); }
+    50%      { box-shadow: 0 0 calc(20px * var(--inv, 1)) calc(6px * var(--inv, 1)) rgba(0,229,255,.12); }
+  }
+  /* 움직임을 줄여 달라고 한 사람에게는 깜빡이지 않고 굵게 두른다 — 표시가
+     사라지면 안 되므로 애니메이션만 걷는다. */
+  @media (prefers-reduced-motion: reduce) {
+    .detview .box.hl {
+      animation: none;
+      box-shadow: 0 0 calc(9px * var(--inv, 1)) calc(2px * var(--inv, 1)) rgba(0,229,255,.6);
+    }
+  }
+  /* 무슨 표시인지 말한다. **`display` 를 잡지 않는다** — 클래스 규칙이
+     `display` 를 잡으면 브라우저 기본 `[hidden] { display: none }`(특이도
+     (0,0,1))이 져서, JS 가 감춰도 그대로 보인다 (CLAUDE.md 의 함정). */
+  /* **사진 위에 얹는다 — 사진 밖의 블록이 아니다.** 밖에 두면 뜰 때와 걷힐 때
+     사진이 위아래로 밀리는데, 이 말은 **누르면 사라지는 말**이라 사람이 개체를
+     누르는 순간 화면이 통째로 움직인다.
+
+     교정 도구(`.tools`, 좌상단)를 비켜 한 줄 아래에 선다. 겹쳐도 클릭은
+     통과하지만(`pointer-events: none`) 버튼 글자를 가린다. */
+  .detview .hlflag {
+    position: absolute; left: 50%; top: 46px; z-index: 6;
+    transform: translateX(-50%); pointer-events: none; text-align: center;
+    max-width: calc(100% - 40px); padding: 5px 14px 6px; border-radius: 8px;
+    font-size: 12.5px; line-height: 1.35;
+    background: rgba(0,0,0,.72); color: #baf4ff;
+    border: 1px solid rgba(0,229,255,.6);
+  }
+  .detview .hlflag.bad {
+    color: #ffd9d9; border-color: rgba(255,95,95,.7);
+  }
+  /* **버튼만 눌림을 받는다.** 줄 전체가 `pointer-events: none` 이라 사진 위를
+     덮고 있어도 클릭이 그대로 통과하는데, 버튼은 눌려야 한다. */
+  .detview .hlflag button {
+    display: block; margin: 5px auto 0; pointer-events: auto;
+    font: inherit; font-size: 12px; line-height: 1; padding: 4px 12px;
+    border-radius: 999px; cursor: pointer;
+    background: rgba(0,229,255,.14); color: #d6faff;
+    border: 1px solid rgba(0,229,255,.75);
+  }
+  .detview .hlflag button:hover { background: rgba(0,229,255,.3); }
+  /* **`display` 를 잡았으니 `[hidden]` 을 명시한다.** 브라우저 기본
+     `[hidden] { display: none }` 은 특이도 (0,0,1) 이라 위 규칙에 진다 —
+     감추라고 해 놓고 그대로 보이는 그 자리다 (CLAUDE.md · `.catcard .row` 와
+     같은 처방). */
+  .detview .hlflag button[hidden] { display: none; }
+  /* 읽기 전용 표시가 떠 있으면 그 아래로 내려간다 — 겹치면 "저장이 안 되는
+     화면" 이라는 말을 가린다. `~` 로 잡는 것은 `.hlflag` 가 DOM 에서 뒤에
+     있어서다(`_detection.html`). 표시가 감춰져 있으면(`[hidden]`) 안 걸린다. */
+  .detview .roflag:not([hidden]) ~ .hlflag { top: 62px; }
+
+  /* --- 교정 도구 (사진 좌상단) ---
+     사진에서 눈을 떼지 않고 조작하려면 버튼이 사진 위에 있어야 한다.
+     캔버스의 확대·선택 판정이 버튼 클릭을 삼키지 않게 JS 에서 전파를 끊는다. */
+  .detview .tools {
+    position: absolute; left: 8px; top: 8px; z-index: 5;
+    display: flex; gap: 5px; flex-wrap: wrap; max-width: calc(100% - 190px);
+    line-height: 1.2; cursor: default;
+  }
+  .detview .tools button {
+    font: inherit; font-size: 11.5px; padding: 4px 9px; cursor: pointer;
+    background: rgba(0,0,0,.62); color: #fff;
+    border: 1px solid rgba(255,255,255,.22); border-radius: 6px;
+  }
+  .detview .tools button:hover { border-color: var(--accent); color: var(--accent); }
+  .detview .tools button.danger:hover { border-color: #ff6b6b; color: #ff8a8a; }
+  /* 접어 둔 넷 (DiaRUGA 194). `⋯` 은 늘 보이고, 펼친 판은 흐름 밖이라 아래가 안 밀린다 */
+  .detview .tools .moretools { position: relative; }
+  .detview .tools .moretools > summary {
+    list-style: none; cursor: pointer;
+    font: inherit; font-size: 11.5px; padding: 4px 11px;
+    background: rgba(0,0,0,.62); color: #fff;
+    border: 1px solid rgba(255,255,255,.22); border-radius: 6px;
+  }
+  .detview .tools .moretools > summary::-webkit-details-marker { display: none; }
+  .detview .tools .moretools > summary:hover { border-color: var(--accent); color: var(--accent); }
+  .detview .tools .moretools[open] > summary { border-color: var(--accent); color: var(--accent); }
+  .detview .tools .morebox {
+    position: absolute; left: 0; top: calc(100% + 4px); z-index: 6;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  }
+  /* --- 마스크 그리기 (사진 우상단) --- (DiaRUGA 194)
+     검토하는 동안 손이 자주 가는 유일한 도구라 홀로 세운다. 레이어 토글이
+     같은 모서리에 있어 그만큼 왼쪽으로 물러난다(아래 `.layers`). */
+  .detview .drawtool { position: absolute; right: 8px; top: 8px; z-index: 6; }
+  .detview .drawtool button {
+    font: inherit; font-size: 16px; line-height: 1; padding: 7px 11px;
+    cursor: pointer; background: rgba(0,0,0,.62); color: #fff;
+    border: 1px solid rgba(255,255,255,.22); border-radius: 6px;
+  }
+  .detview .drawtool button:hover { border-color: var(--accent); color: var(--accent); }
+  .detview .drawtool button.on { border-color: var(--accent); color: var(--accent); }
+
+  /* --- 검토 완료 (사진 하단 가운데) --- */
+  .detview .donebar {
+    position: absolute; left: 50%; bottom: 12px; z-index: 5;
+    transform: translateX(-50%); cursor: default;
+  }
+  .detview .donebar button {
+    font: inherit; font-size: 15px; font-weight: 650; padding: 11px 26px;
+    cursor: pointer; border-radius: 10px; letter-spacing: .2px;
+    background: rgba(0,0,0,.7); color: #fff;
+    border: 1px solid rgba(255,255,255,.34);
+    box-shadow: 0 3px 14px rgba(0,0,0,.4);
+  }
+  .detview .donebar button:hover { border-color: var(--accent); color: var(--accent); }
+  /* 완료된 것은 완료됐다고 못 박는다 — 목록의 ✓ 검토 배지와 같은 초록이다. */
+  .detview .donebar button.on {
+    background: rgba(26,110,55,.86); border-color: #7ee787; color: #eaffe9;
+  }
+  .detview .donebar button.on:hover { border-color: #fff; color: #fff; }
+
+  /* --- 레이어 토글 (사진 우상단) ---
+     끄더라도 .box 요소는 남긴다 — 클릭 판정을 bbox 가 하므로 지우면 선택이 죽는다.
+     테두리만 투명하게 만들고, 선택·hover 표시는 남겨 조작감을 유지한다. */
+  .detview .layers {
+    /* 연필(`.drawtool`)이 모서리를 쓴다 — 그만큼 물러난다 (DiaRUGA 194) */
+    position: absolute; right: 54px; top: 8px; z-index: 5;
+    display: flex; gap: 11px; padding: 5px 10px; border-radius: 7px;
+    background: rgba(0,0,0,.62); line-height: 1.2; cursor: default;
+  }
+  .detview .layers label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: #fff; cursor: pointer;
+  }
+  .detview .layers input { margin: 0; cursor: pointer; accent-color: #5ac8fa; }
+  /* fill 은 mask 가 꺼져 있으면 뜻이 없다. 감추지 않고 잠근다 — 자리가 사라지면
+     옆 항목이 밀려서 껐다 켜는 동안 마우스가 엉뚱한 것을 누른다. */
+  .detview .layers label.off { opacity: .4; cursor: default; }
+  .detview .layers label.off input { cursor: default; }
+
+  /* --- 스케일바 (사진 우하단) ---
+     canvas 가 아니라 detview 의 자식이라 확대/이동 변환을 받지 않는다.
+     그래서 어디로 끌고 가든 늘 같은 자리에 보이고, 길이만 배율에 맞춰 바뀐다. */
+  .detview .scalebar {
+    position: absolute; right: 10px; bottom: 10px; z-index: 5;
+    padding: 6px 9px 5px; border-radius: 6px; background: rgba(0,0,0,.62);
+    color: #fff; pointer-events: none; text-align: center;
+  }
+  .detview .scalebar i {
+    display: block; height: 4px; background: #fff; border-radius: 1px;
+    min-width: 20px; margin: 0 auto 4px;
+  }
+  .detview .scalebar span {
+    display: block; font-size: 11px; line-height: 1.1;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .2px;
+  }
+
+  /* --- 사진 캐러셀 --- */
+  .shotcap {
+    display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+    padding: 9px 2px 0; font-size: 13px; line-height: 1.5;
+  }
+  .shotcap a { margin-left: auto; font-size: 12px; }
+  .strip {
+    display: flex; gap: 8px; overflow-x: auto; padding: 9px 2px 4px;
+    scrollbar-width: thin;
+  }
+  /* 썸네일 목록 좌우의 이동 버튼. 높이는 썸네일에 맞추고 폭만 좁게 잡는다:
+     align-items:stretch 로 늘리고, .strip 의 위아래 padding 을 margin 으로
+     그대로 흉내내면 썸네일 자체와 정확히 같은 높이가 된다. */
+  .striprow { display: flex; gap: 6px; align-items: stretch; }
+  .striprow .strip { flex: 1 1 auto; min-width: 0; }   /* min-width 가 없으면 안 줄어든다 */
+  .navbtn {
+    flex: 0 0 auto; width: 26px; margin: 9px 0 4px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel); color: var(--dim);
+    border: 1px solid var(--line); border-radius: 7px;
+    font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+  }
+  .navbtn.grp { width: 30px; }
+  .navbtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .navbtn:disabled { opacity: .28; cursor: default; }
+  .strip .shot {
+    flex: 0 0 auto; width: 128px; padding: 0; cursor: pointer;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; overflow: hidden; color: inherit;
+    font: inherit; text-align: left; line-height: 1.4;
+    /* 버튼은 내용을 수직 중앙에 놓는다. 선명도 막대가 없는 합성본은 그래서
+       사진이 아래로 내려가 다른 썸네일과 어긋난다. 위에서부터 쌓는다. */
+    display: flex; flex-direction: column;
+  }
+  .strip .shot:hover { border-color: var(--accent); }
+  .strip .shot.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .strip .shot.best .cap { color: var(--good); }
+  /* flex-shrink 를 막아야 한다 — 늘어난 칸에서 사진이 눌리면 배율이 달라 보인다. */
+  .strip .shot img {
+    flex: 0 0 auto; width: 100%; aspect-ratio: 2752/2208;
+    object-fit: cover; display: block; background: #000;
+  }
+  .strip .shot .cap { display: block; padding: 5px 7px 2px; font-size: 11px; }
+  /* 막대는 아래에 붙인다 — 막대가 있는 썸네일끼리도 높이가 맞는다. */
+  .strip .shot .bar { height: 3px; margin: auto 7px 7px; }
+  .detview .box.manual { border-style: dashed; border-color: #ffb454; }
+  /* **엔진이 안 낸 개체** (DiaRUGA P09 2단계) — 재검출에서 임자를 잃은 고아, 그리고
+     3단계부터는 사람이 그린 것. 분류 색은 그대로 두고 **테두리로만** 가른다:
+     색은 "무엇인가" 를 말하는 자리라(DiaRUGA 039) 빌려 쓰면 개체 종류를 잘못 읽는다.
+
+     **`.detview` 를 붙인다** — `.box` 만 적으면 `.detview .box.<분류>` 가
+     특이도에서 이겨 아무 일도 안 일어난다(051 에서 그렇게 도구를 감춘 줄
+     알았다). 굵기를 올려 분류 테두리보다 먼저 눈에 들어오게 한다. */
+  .detview .box.orphan {
+    border-style: dashed; border-width: 2px;
+    box-shadow: 0 0 0 calc(1px * var(--inv, 1)) rgba(255,255,255,.35);
+  }
+  .detview .box.orphan::before {
+    content: "?"; position: absolute;
+    left: calc(2px * var(--inv, 1)); top: calc(-1px * var(--inv, 1));
+    font: 700 calc(10px * var(--inv, 1))/1 ui-sans-serif, system-ui;
+    color: rgba(255,255,255,.9);
+  }
+  /* 오검출로 지운 것 — 흔적만 남겨 클릭 한 번으로 되살릴 수 있게 한다.
+     채우면 아래 이미지가 가려져 지운 게 맞는지 확인할 수 없으므로 테두리만 그린다. */
+  .detview .box.gone {
+    border-style: dotted; border-color: rgba(255,80,80,.85);
+    background: none; opacity: .8;
+  }
+  .detview .box.gone:hover { opacity: 1; border-color: #ffd23f; }
+  .detview .box.gone::after {
+    content: "✕"; position: absolute;
+    right: calc(1px * var(--inv, 1)); top: calc(-1px * var(--inv, 1));
+    font: calc(10px * var(--inv, 1))/1 ui-sans-serif, system-ui;
+    color: rgba(255,255,255,.75);
+  }
+
+  /* 빈 곳 클릭 시 펼쳐지는 탈락 후보 선택기 */
+  .spread {
+    position: fixed; z-index: 60; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.45); max-width: 520px;
+  }
+  .spread .shead { font-size: 12px; margin-bottom: 8px; color: var(--dim); padding-right: 26px; }
+
+  /* 같은 개체 묶기 팝업 (DiaRUGA P11). `.spread` 를 입고 가운데에 놓인다 — 여러 판을
+     한 줄씩 늘어놓아 폭이 있고, 우클릭 지점에 붙이면 화면 밖으로 나간다. */
+  .linkpanel { left: 50%; top: 50%; transform: translate(-50%, -50%);
+               max-width: 700px; max-height: 82vh; overflow: auto; }
+  .linkpanel .lrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .linkpanel .lname { flex: 0 0 110px; font-size: 12px; color: var(--dim);
+                      text-align: right; }
+  .linkpanel .lcands { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .linkpanel .scell { position: relative; }
+  .linkpanel .scell.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .linkpanel .scell.anchor { cursor: default; }
+  .linkpanel .lstar { position: absolute; right: 2px; top: 0;
+                      font-size: 15px; color: var(--dim); cursor: pointer;
+                      text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  .linkpanel .lstar.on { color: var(--warn); }
+  .linkpanel .lnone { background: none; border: 1px dashed var(--line);
+                      border-radius: 7px; padding: 6px 10px; color: var(--dim);
+                      font: inherit; font-size: 12px; cursor: pointer; }
+  .linkpanel .lnone.on { border-color: var(--accent); color: var(--accent); }
+  .linkpanel .lerr { color: var(--danger); font-size: 12px; min-height: 0; }
+  .linkpanel .lerr:not(:empty) { margin: 4px 0 8px; }
+  .linkpanel .lfoot { display: flex; gap: 10px; margin-top: 12px;
+                      align-items: center; }
+  /* 탈락 후보 (DiaRUGA 102) — 탈락 레이어와 **같은 빨간 점선**이다. 화면에서 보던
+     그 표시가 팝업에서도 같은 뜻이어야 눈이 다시 배우지 않는다. */
+  .linkpanel .scell.rej { border-style: dashed; border-color: var(--danger); }
+  .linkpanel .scell.rej.on { border-color: var(--accent); border-style: solid; }
+  .linkpanel .ltag {
+    position: absolute; left: 2px; top: 1px; padding: 0 4px;
+    border-radius: 4px; font-size: 10px; font-weight: 700;
+    background: var(--danger); color: #fff; pointer-events: none;
+  }
+  .linkpanel .lrev { font-size: 12px; color: var(--warn); }
+
+  /* 묶으면 분류·종명이 하나가 된다 (2026-08-10). 엇갈릴 때만 도드라지게 —
+     늘 붉으면 사람이 곧 안 읽는다. */
+  .linkpanel .lunify:empty { display: none; }
+  .linkpanel .urow {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 5px 10px; border-top: 1px solid var(--line); font-size: 12px;
+  }
+  /* **테마 토큰을 쓴다** — 밝은 쪽에 맞춰 색을 박으면 어두운 테마에서 흰
+     덩어리가 된다. 배너 색이 이미 테마마다 갈려 있으므로 그것을 빌린다. */
+  .linkpanel .urow.clash { background: var(--warn-bg); color: var(--warn-fg); }
+  .linkpanel .ulab { color: var(--dim); }
+  .linkpanel .urow.clash .ulab { color: var(--warn-fg); font-weight: 600; }
+  .linkpanel .uchip {
+    border: 1px solid var(--line); background: #fff; border-radius: 10px;
+    padding: 1px 8px; font-size: 12px; cursor: pointer; color: var(--fg);
+  }
+  .linkpanel .uchip.on {
+    border-color: var(--accent); background: var(--accent); color: #fff;
+  }
+  .linkpanel .uchip.keep.on { background: var(--dim); border-color: var(--dim); }
+
+  /* 묶인 개체 (DiaRUGA P11 3단계). 상자 오른쪽 위의 사슬 — 마스크 색을 안 건드린다
+     (색은 분류가 말하고, 묶임은 정체에 대한 다른 축이다).
+
+     **`--inv` 를 곱한다.** 이것만 고정 px 이었고, 그래서 확대를 줄이면 옆의
+     `?`·`✕` 배지는 그대로인데 **사슬만 작아졌다** — 사람이 "묶였다는 표시가
+     잘 안 보인다" 고 한 것이 그 모양이다 (2026-08-11). 두께를 `--inv` 로 재는
+     이유가 바로 이것이고(`.box` 머리말), 배지도 같은 자를 써야 한다.
+
+     **원판을 깔았다.** 마스크 위는 사진이라 밝기를 예측할 수 없다 — 흰 글자에
+     그림자만으로는 밝은 개체 위에서 묻힌다. 테마 변수를 안 쓰는 것도 같은
+     이유다: 여기 배경은 테마가 아니라 현미경 사진이다(107 에서 배지 색을
+     박았다가 어두운 테마에서 흰 덩어리가 된 것과 **반대 방향의 자리**).
+
+     **`.detview` 를 붙인다** — `.detview .box.gone::after` 와 특이도를 맞춘다.
+     안 붙이면 지운 상자에서 저쪽 `✕` 가 이겨 사슬이 조용히 사라진다(DiaRUGA 051). */
+  .detview .box.linked::after {
+    content: '⛓'; position: absolute; pointer-events: none;
+    right: calc(1px * var(--inv, 1)); top: calc(-8px * var(--inv, 1));
+    font-size: calc(26px * var(--inv, 1)); line-height: 1;
+    /* **11px → 26px.** 화면에서 여러 크기를 비교해 고른 값이다
+       (사용자 2026-08-11).
+
+       **이것은 컬러 이모지로 그려진다.** 그래서 `color` 가 안 먹는다 — 아래
+       흰색은 이모지 글꼴이 없는 클라이언트에서 흑백 글리프로 떨어질 때만
+       쓰인다. 그림자는 이모지에도 걸려 사진 위에서 윤곽을 만든다.
+
+       **모양이 클라이언트마다 다르다.** 이모지라 Windows(Segoe UI Emoji)와
+       리눅스(Noto)가 서로 다른 사슬을 그린다. 색·윤곽을 우리가 정하려면 SVG
+       로 따라 그려야 하는데, 그 값보다 "사슬로 바로 읽힌다" 는 쪽을 택했다 —
+       SVG 로 고리를 그려 본 시안들은 이 크기에서 사슬로 안 읽혔다
+       (`git stash` 에 남겨 뒀다). */
+    color: #fff;
+    text-shadow: 0 0 calc(3px * var(--inv, 1)) rgba(0,0,0,.95),
+                 0 0 calc(1px * var(--inv, 1)) rgba(0,0,0,1);
+  }
+  /* 판을 넘어온 묶음의 짝 — 잠깐 밝힌다 */
+  .box.linkflash { outline: 2px solid var(--warn); outline-offset: 2px;
+                   transition: outline-color 1.2s ease-out; }
+  .spread .sclose {
+    position: absolute; right: 7px; top: 6px; width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+    background: transparent; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 6px; padding: 0;
+  }
+  .spread .sclose:hover { border-color: var(--accent); color: var(--accent); }
+  .spread .sgrid {
+    display: flex; gap: 8px; flex-wrap: wrap; max-width: 720px;
+    align-items: flex-start; max-height: 74vh; overflow-y: auto;
+  }
+  .spread .scell {
+    padding: 0; cursor: pointer; font: inherit; color: inherit;
+    background: transparent; border: 1px solid var(--line); border-radius: 7px;
+    overflow: hidden; text-align: center;
+    display: flex; flex-direction: column; align-items: stretch;
+  }
+  .spread .scell:hover:not(:disabled) { border-color: var(--accent); }
+  /* 읽기 전용 — 볼 수만 있다. 크롭은 그대로 밝게 둔다(그것을 보러 여는 판이다).
+     달라지는 것은 커서와 hover 뿐이라 "누를 수 있다" 는 신호만 걷힌다. */
+  .spread .scell:disabled { cursor: default; }
+  /* 칸 크기를 크롭의 종횡비대로 JS 가 정한다 — 늘리지 않는다. */
+  .spread .scrop { display: block; position: relative; background: #000; }
+  .spread .scrop img { width: 100%; height: 100%; display: block; }
+  .spread .scrop svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .spread .scrop polygon {
+    fill: rgba(255,210,63,.30); stroke: rgba(255,235,150,.95);
+    stroke-width: 1.4px; vector-effect: non-scaling-stroke;
+  }
+  .spread .scap { display: block; padding: 4px 5px 6px; font-size: 10.5px; line-height: 1.35; }
+
+  .ctxmenu {
+    position: fixed; z-index: 70; min-width: 176px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 26px rgba(0,0,0,.45);
+  }
+  .ctxmenu button {
+    display: block; width: 100%; text-align: left; font: inherit; font-size: 12.5px;
+    padding: 6px 10px; background: transparent; color: inherit;
+    border: 0; border-radius: 5px; cursor: pointer;
+  }
+  .ctxmenu button:hover:not(:disabled) { background: var(--line); }
+  .ctxmenu button:disabled { opacity: .4; cursor: default; }
+  .ctxmenu button.danger { color: #ff6b6b; }
+  .ctxmenu .msep { height: 1px; background: var(--line); margin: 4px 6px; }
+  /* 읽기 전용에서 "왜 고치는 항목이 없는가" 를 적는 줄. disabled 단추로 내면
+     opacity .4 라 "지금은 못 누르는 항목" 으로 읽힌다 — 설명은 설명처럼 보여야
+     한다 (DiaRUGA 051). */
+  .ctxmenu .mnote {
+    padding: 6px 10px; font-size: 12px; line-height: 1.4;
+    color: #ff8a8a; white-space: nowrap;
+  }
+
+  /* 캐러셀 끝에서 → 를 누르면 다음 시야로 넘어갈지 묻는다.
+     "다시 묻지 않기" 를 넣어야 하므로 confirm() 으로는 안 된다. */
+  .askwrap {
+    position: fixed; inset: 0; z-index: 80; display: flex;
+    align-items: center; justify-content: center; background: rgba(0,0,0,.45);
+  }
+  .askbox {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 15px 18px 16px; max-width: 380px; font-size: 13px; line-height: 1.6;
+    box-shadow: 0 14px 40px rgba(0,0,0,.5);
+  }
+  .askbox h3 { margin: 0 0 4px; font-size: 13.5px; }
+  .askbox label {
+    display: flex; gap: 6px; align-items: center;
+    margin-top: 11px; font-size: 12px; color: var(--dim); cursor: pointer;
+  }
+  .askbox .askrow { display: flex; gap: 8px; margin-top: 13px; }
+  .askbox .askrow button {
+    font: inherit; font-size: 12.5px; padding: 5px 12px; cursor: pointer;
+    background: var(--panel); color: inherit;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .askbox .askrow button:hover { border-color: var(--accent); }
+  .askbox .askrow button.go { border-color: var(--accent); color: var(--accent); }
+  /* 두께는 --inv(= 1/배율) 를 곱해 화면에서 늘 같게 보이도록 한다. canvas 가
+     scale(k) 로 확대되므로 곱해 두지 않으면 선까지 k 배로 두꺼워진다.
+     --inv 는 applyTransform() 이 canvas 에 얹는다. */
+  .detview .box {
+    position: absolute; cursor: pointer;
+    border-style: solid; border-color: rgba(255,60,60,.85);
+    border-width: calc(2px * var(--inv, 1));
+    border-radius: calc(2px * var(--inv, 1));
+  }
+  .detview .box.foram { border-color: rgba(196,181,253,.9); }
+  .detview .box.broken { border-color: rgba(255,180,84,.9); }
+  .detview .box.fragment { border-color: rgba(150,140,190,.9); }
+  .detview .box.other { border-color: rgba(130,130,130,.9); }
+  /* 사람이 지정한 분류는 실선 대신 굵은 점선 — 자동 판정과 구분된다 */
+  .detview .box.userset { border-style: dashed; }
+  .detview .box.hot   { border-width: calc(3px * var(--inv, 1));
+                        box-shadow: 0 0 0 calc(2px * var(--inv, 1)) rgba(255,255,255,.55); }
+  .detview .box.sel {
+    border-color: #ffd23f; border-width: calc(3px * var(--inv, 1));
+    background: rgba(255,210,63,.18);
+  }
+  .detview .band {
+    position: absolute; border: 1px dashed #ffd23f;
+    background: rgba(255,210,63,.12); pointer-events: none; display: none;
+  }
+
+  /* 레이어 끄기 — .box.rod/.gone/.manual 뒤에 와야 색을 덮는다.
+     선택과 hover 표시는 남긴다: 안 보이는 것을 조작하고 있으면 헷갈린다. */
+  .detview.hide-box .box,
+  .detview.hide-box .box.foram,
+  .detview.hide-box .box.broken,
+  .detview.hide-box .box.fragment,
+  .detview.hide-box .box.other,
+  .detview.hide-box .box.manual,
+  .detview.hide-box .box.orphan,
+  .detview.hide-box .box.gone { border-color: transparent; background: none; }
+  .detview.hide-box .box.gone::after,
+  .detview.hide-box .box.orphan::before { display: none; box-shadow: none; }
+  .detview.hide-box .box.hot { border-color: rgba(255,255,255,.8); }
+  .detview.hide-box .box.sel { border-color: #ffd23f; background: rgba(255,210,63,.18); }
+  .detview.hide-mask svg.masks polygon:not(.reject) { display: none; }
+  .dettip {
+    position: fixed; z-index: 50; pointer-events: none; display: none;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 8px 11px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 6px 22px rgba(0,0,0,.35); max-width: 260px;
+  }
+  .dettip b { font-size: 12px; }
+  /* **동정한 종명은 맨 위에, 이탤릭 굵게** (사용자 방침 2026-08-10). 학명은
+     이탤릭으로 쓰는 것이 관례이고, 커서를 올렸을 때 가장 먼저 읽혀야 하는 것이
+     그것이다 — 형태(원형·봉상)는 그 다음이다.
+     `.dettip b` 가 위에 있으므로 굵기를 여기서 다시 못 박는다. */
+  .dettip .sp {
+    display: block; font-style: italic; font-weight: 700; font-size: 12.5px;
+    color: var(--fg); margin-bottom: 2px;
+  }
+  .dettip table { width: 100%; font-size: 11.5px; }
+  .dettip td { padding: 1px 0; border: 0; }
+  .dettip td:last-child { text-align: right; font-family: ui-monospace, Menlo, monospace; }
+  .detbar {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    margin: 9px 0 2px; font-size: 12.5px;
+  }
+  /* 검토 화면의 띠 둘 — 저장 실패(`savefail`)와 앉히기 알림(`spreadok`).
+     **색을 박지 않는다** (DiaRUGA 107) — 이미 갈려 있는 토큰을 빌린다. 어두운 쪽에서
+     흰 덩어리가 되는 자리다. `errbar` 는 여기 스타일이 없어 맨 글자로 떴다. */
+  .detview ~ .errbar, .detrow ~ .errbar, .errbar.savefail, .errbar.spreadok {
+    padding: 7px 10px; border-radius: 6px; margin: 8px 0; font-size: 12.5px;
+  }
+  .errbar.savefail {
+    background: var(--err-bg); color: var(--err-fg);
+    border: 1px solid var(--err-line);
+  }
+  .errbar.spreadok {
+    background: var(--ok-bg); color: var(--ok-fg);
+    border: 1px solid var(--ok-line);
+  }
+  .detbar .hint { color: var(--dim); font-size: 11.5px; }
+  .detbar button {
+    font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
+    background: var(--panel); color: inherit;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .detbar button:hover { border-color: var(--accent); }
+
+  .note {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: 6px;
+    padding: 10px 14px; margin: 14px 0; font-size: 13px;
+  }
+  .panels { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .panels figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .panels img { width: 100%; display: block; background: #000; cursor: zoom-in; }
+  .panels figcaption { padding: 8px 12px; font-size: 12px; color: var(--dim); }
+
+  /* --- 좁은 화면 — 태블릿·폰 (DiaRUGA 192) --------------------------------------
+     **손가락과 폭 둘 다 문제다.** 이 화면들은 데스크탑에만 있는 것을 쓰고
+     있었다 — 250px 짜리 오른쪽 칸을 옆에 두면 폰에서 사진이 반으로 줄고,
+     4px 여백의 단추는 손끝보다 작다.
+
+     조작 쪽(핀치·이동·길게 누르기)은 `_detview_js.html` 이 맡는다. */
+  /* **조작 안내는 기기가 정한다** (DiaRUGA 192). 손가락 화면에는 손가락 안내를,
+     마우스 화면에는 마우스 안내를 — 짐작하지 않는다(태블릿에 마우스를 붙인
+     자리가 있다). 단축키 줄은 키보드가 없는 자리에서 가리킬 것이 없다. */
+  .touchhint { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .mousehint { display: none; }
+    .touchhint { display: block; }
+  }
+
+
   @media (max-width: 820px) {
     header { padding: 8px 10px; gap: 8px; }
     /* **머리줄을 화면에 붙여 두지 않는다.** 폰에서는 세 줄로 접혀 화면의
@@ -887,10 +1700,11 @@
     { stroke: rgb(130,130,130); fill: rgba(130,130,130,.22); }
   .tile .thumbwrap polygon.none, .vpimg polygon.none, svg.masks polygon.none
     { stroke: rgb(200,200,200); fill: rgba(200,200,200,.15); stroke-dasharray: 6 4; }
-  .badge.foram { border-color: rgb(196,181,253); color: rgb(196,181,253); }
-  .badge.broken { border-color: rgb(255,180,84); color: rgb(255,180,84); }
-  .badge.fragment { border-color: rgb(150,140,190); color: rgb(150,140,190); }
-  .badge.other { border-color: rgb(130,130,130); color: rgb(130,130,130); }
+  /* 배지 색은 `#RRGGBB` 로 적는다 — `test_classdef_css` 가 `ClassDef.color`(R,G,B)와 대조한다 */
+  .badge.foram { border-color: #c4b5fd; color: #c4b5fd; }
+  .badge.broken { border-color: #ffb454; color: #ffb454; }
+  .badge.fragment { border-color: #968cbe; color: #968cbe; }
+  .badge.other { border-color: #828282; color: #828282; }
   .crop.foram .cbox { border-color: rgb(196,181,253); }
   .crop.broken .cbox { border-color: rgb(255,180,84); }
   .crop.fragment .cbox { border-color: rgb(150,140,190); }

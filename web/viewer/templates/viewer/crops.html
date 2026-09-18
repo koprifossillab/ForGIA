@@ -35,7 +35,11 @@
   {% for d in classes %}
     <a class="chip{% if cls == d.key %} on{% endif %}" href="?cls={{ d.key }}">{{ d.label }}</a>
   {% endfor %}
-  <a class="chip{% if gone %} on{% endif %}" href="?cls=gone" title="문턱이 떨어뜨린 것 — 크기·확신도 관문 밖">탈락분</a>
+  <a class="chip{% if cls == "manual" %} on{% endif %}" href="?cls=manual" title="탈락분에서 사람이 되살린 것">복구</a>
+  <a class="chip{% if cls == "labeled" %} on{% endif %}" href="?cls=labeled" title="사람이 분류를 지정한 것">사람지정</a>
+  <a class="chip{% if cls == "noted" %} on{% endif %}" href="?cls=noted" title="코멘트가 있는 것">코멘트</a>
+  <a class="chip{% if gone %} on{% endif %}" href="?cls=gone" title="사람이 오검출로 지운 것">지운 것</a>
+  <a class="chip{% if cls == "rejected" %} on{% endif %}" href="?cls=rejected" title="문턱이 떨어뜨린 것 — 크기·확신도 관문 밖">탈락분</a>
   <span class="dim">방향</span>
   <a class="chip{% if upright %} on{% endif %}" href="{{ upright_url }}"
      title="마스크의 주축을 세로로 세워 방향을 통일한다">세움 {{ n_upright }}</a>

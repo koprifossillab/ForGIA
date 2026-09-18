@@ -9,6 +9,7 @@
   | 자료 | 이 관찰이 어느 지점·시료의 것인가 | 새 슬라이드가 들어올 때 |
   | 운영 | 지금 무엇을 보고 있고 새 자료를 어떻게 채우는가 | 회차를 돌릴 때 |
   | 학습 자료 | 검토한 것에서 정답을 얼마나 뽑을 수 있는가 | 다음 회차를 준비할 때 |
+  | 학명 (ForGIA) | 자동완성에 어느 학명을 낼 것인가 · WoRMS 반입은 됐는가 | 종 목록을 손볼 때 |
 
   한 화면에 다 있으면 **자주 쓰는 것이 드물게 쓰는 것에 묻힌다** — 층 편집표
   셋 아래에 묶음 고르기가 있었다.
@@ -17,6 +18,8 @@
   <a href="{% url 'system_settings' %}"{% if here == "data" %} class="on"{% endif %}>자료</a>
   <a href="{% url 'system_settings_ops' %}"{% if here == "ops" %} class="on"{% endif %}>운영</a>
   {% comment %} 학습 자료 탭은 4단계(분류기)에서 온다 {% endcomment %}
+  {% comment %} 학명 — ForGIA 의 것. 켠 학명(자동완성 목록)과 WoRMS 반입 상태 {% endcomment %}
+  <a href="{% url 'system_settings_taxa' %}"{% if here == "taxa" %} class="on"{% endif %}>학명</a>
   <a href="{% url 'system_settings_pipeline' %}"{% if here == "pipeline" %} class="on"{% endif %}>파이프라인</a>
   {% comment %}
     **미리보기** — 머리줄에 있던 것을 여기로 옮겼다 (사용자 요청 2026-08-08).

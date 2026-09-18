@@ -33,7 +33,7 @@ class DetectionDataTest(ForGIATestCase):
         self.assertContains(r, "검출 없음")
 
     def test_other_batch_is_not_counted_but_named(self):
-        fx.add_other_engine(self.w.vp, n_candidates=5)
+        fx.add_other_engine(self.w.vp, label="yolo-다른회차", n_candidates=5, current=True)
         self.assertEqual(data._slide_summary(self.w.slide)["n_detected"], 6)
         RunBatch.objects.update(for_review=False)
         d = data.dataset_detail("rs23")
@@ -49,14 +49,14 @@ class DetectionDataTest(ForGIATestCase):
 
     def test_group_page_overlays_masks_only_on_stack(self):
         r = self.client.get(reverse("group", args=["rs23", 0]))
-        self.assertContains(r, '<svg class="masks"')
-        self.assertContains(r, "3개 <span")
-        # 싱글턴(합성본 없음)은 프레임 검출 — 합성본 좌표가 아니라 마스크를 안 얹는다
-        w2 = fx.make_world(slug="single", site_code="AM22", with_stack=False, n_candidates=1)
+        self.assertContains(r, 'class="masks"')
+        self.assertEqual(r.context["stack"]["detection"]["n_candidates"], 3)
+        # 싱글턴(합성본 없음)은 프레임 검출 — 그 프레임의 검출을 그린다
+        fx.make_world(slug="single", site_code="AM22", with_stack=False, n_candidates=1)
         r = self.client.get(reverse("group", args=["single", 0]))
         self.assertEqual(r.status_code, 200)
-        self.assertNotContains(r, '<svg class="masks"')
-        self.assertContains(r, "1개")
+        self.assertIsNone(r.context["stack"])
+        self.assertEqual(r.context["frames"][0]["detection"]["n_candidates"], 1)
 
 
 class ScreensTest(ForGIATestCase):
@@ -69,7 +69,7 @@ class ScreensTest(ForGIATestCase):
         self.assertEqual(r.content.decode().count('<a class="crop'), 6)
         r = self.client.get(reverse("crops", args=["rs23"]), {"cls": "fragment"})
         self.assertEqual(r.content.decode().count('<a class="crop fragment"'), 2)
-        r = self.client.get(reverse("crops", args=["rs23"]), {"cls": "gone"})
+        r = self.client.get(reverse("crops", args=["rs23"]), {"cls": "rejected"})
         self.assertEqual(r.content.decode().count('<a class="crop'), 2)
         self.assertContains(r, "장축범위밖")
 
@@ -90,7 +90,7 @@ class ScreensTest(ForGIATestCase):
         self.assertEqual(r.content.decode().count('title="이 개체가 있는 시야를 연다"'), 6)
 
     def test_ops_tab_and_review_batch_switch(self):
-        other = fx.add_other_engine(self.w.vp, n_candidates=2)
+        other = fx.add_other_engine(self.w.vp, label="yolo-다른회차", n_candidates=2, current=True)
         r = self.client.get(reverse("system_settings_ops"))
         self.assertContains(r, "yolo-다른회차")
         self.assertContains(r, "이것으로 검토")
@@ -100,7 +100,7 @@ class ScreensTest(ForGIATestCase):
                              {"act": "review_batch", "batch": empty.pk}, follow=True)
         self.assertContains(r, "검출이 없습니다")
         r = self.client.post(reverse("system_settings_ops"),
-                             {"act": "review_batch", "batch": other.run.batch_id}, follow=True)
+                             {"act": "review_batch", "batch": other.batch_id}, follow=True)
         self.assertContains(r, "검토할 묶음을 yolo-다른회차 로")
         self.assertEqual(data.review_batch_label(), "yolo-다른회차")
         self.assertEqual(data._slide_summary(self.w.slide)["n_detected"], 2)
