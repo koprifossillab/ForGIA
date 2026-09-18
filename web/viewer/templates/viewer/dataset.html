@@ -1,8 +1,8 @@
 {% extends "viewer/base.html" %}
 {% load viewer_extras %}
 {% comment %}
-  DiaRUGA v0.29.0 `dataset.html` 에서 왔다. 검출 마스크·검토 완료·묶음 표시는 2·3단계에서
-  되살린다 — 지금은 시야(격자 칸)의 사진과 합성 여부만 낸다.
+  DiaRUGA v0.29.0 `dataset.html` 에서 왔다. 검출 마스크·묶음 표시는 2단계에서 되살렸고,
+  검토 완료(`data-reviewed` · 완료 숨기기)는 3단계에서 온다.
 {% endcomment %}
 {% block title %}{{ label }} — ForGIA{% endblock %}
 {% block subtitle %}{{ label }}{% endblock %}
@@ -26,12 +26,15 @@
 {% endcomment %}
 <div class="pagehead">
   <h2>{{ label }}</h2>
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
   {% comment %}
     같은 슬라이드를 다른 각도로 보는 길 셋. **오른쪽 정렬**이다(사용자 요청) —
     제목·묶음 표시는 "무엇을 보고 있는가", 이쪽은 "어디로 갈 수 있는가" 라
     줄의 양 끝으로 갈라 두면 읽는 방향이 안 섞인다.
   {% endcomment %}
   <span class="pagelinks">
+    <a href="{% url 'crops' slug %}">검출 결과만 보기</a>
+    <a href="{% url 'detections' slug %}">계측 표</a>
     <a href="{% url 'dataset_edit' slug %}">슬라이드 정보 편집</a>
   </span>
 </div>
@@ -41,14 +44,29 @@
   {% if um_per_pixel %}{{ um_per_pixel|floatformat:4 }} µm/px · {% endif %}
   사진 {{ n_images }} → 시야 {{ n_groups }} · 평균 {{ mean_size }}장 ·
   싱글턴 {{ singletons }} · 최대 {{ max_size }}장 · 합성 {{ n_stacks }}/{{ n_groups }}
+  {% if missing_groups %}<br>
+  <span class="miss">{{ review_batch }} 의 검출 없음 {{ missing_groups }}{% if missing_elsewhere %}
+    (그중 {{ missing_elsewhere }}는 <b>다른 묶음에는 있습니다</b> —
+     <a href="{% url 'system_settings_ops' %}">검토할 묶음</a>){% endif %}</span>
+  {% endif %}
+</p>
+<p class="dim mono" style="font-size:12px">
+  검출 {{ n_auto }} 개 {% if class_counts %}({% for d in class_counts %}{{ d.label }} {{ d.n }}{% if not forloop.last %} · {% endif %}{% endfor %}){% endif %}
+  {% if mean_detected %}· 시야당 {{ mean_detected }}{% endif %}
+  <span class="dim">— 교정(삭제·되살림·분류)은 3단계에서 붙는다</span>
 </p>
 
 <div class="grid">
 {% for g in groups %}
   <a class="tile" href="{% url 'group' slug g.id %}">
     {% if g.cover_rel %}
-      <span class="thumbwrap">
+      <span class="thumbwrap"{% if g.cover_size %} style="aspect-ratio: {{ g.cover_size.0 }}/{{ g.cover_size.1 }}"{% endif %}>
         <img loading="lazy" src="{% thumb g.cover_rel 300 %}" alt="group {{ g.id }}">
+        {% if g.masks %}
+          <svg viewBox="0 0 {{ g.cover_size.0 }} {{ g.cover_size.1 }}" preserveAspectRatio="none">
+            {% for m in g.masks %}<polygon class="{{ m.cls }}" points="{{ m.points }}"/>{% endfor %}
+          </svg>
+        {% endif %}
         {% comment %}
           사진이 여럿인 시야 표시. 싱글턴에 배지를 붙이는 것보다 이쪽이 낫다 —
           대부분이 여럿이므로 배지를 달면 목록이 배지로 덮인다. 겹친 네모로
@@ -73,6 +91,10 @@
       <div class="dim mono">{{ g.sharpest }}</div>
       <div style="margin-top:5px; display:flex; gap:5px; flex-wrap:wrap">
         {% if g.has_stack %}<span class="badge on">합성됨</span>{% endif %}
+        {% if g.n_detected %}<span class="badge on">{{ g.n_detected }}개 검출</span>{% endif %}
+        {% if g.missing %}<span class="badge warn"
+          title="{% if g.elsewhere %}{{ g.elsewhere|join:' · ' }} 에는 검출이 있습니다{% else %}아직 검출하지 않았습니다{% endif %}"
+          >{% if g.elsewhere %}다른 묶음{% else %}검출 없음{% endif %}</span>{% endif %}
       </div>
     </div>
   </a>
@@ -80,5 +102,7 @@
 </div>
 
 <style>
+  .miss { color: var(--warn); }
+  .miss a { color: inherit; }
 </style>
 {% endblock %}

@@ -772,6 +772,150 @@
     .offdone .who { width: 100%; }
     .offdone button.get { padding: 13px 18px; }
   }
+  /* --- 2단계: 문턱 화면·검출 갤러리 (DiaRUGA base.html) --- */
+
+
+  /* --- 문턱 조정 화면 ---
+     한 시야를 보며 정한 값이 시야 전부에 걸리므로, 영향받는 시야를 영향 큰 순으로
+     늘어놓고 뒤집히는 개체를 표시한다. */
+  .thpanel { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .thgrid {
+    flex: 1 1 460px; min-width: 0;
+    display: grid; gap: 3px 10px; grid-template-columns: 1fr 1fr;
+  }
+  .throw {
+    display: flex; flex-direction: column; gap: 1px;
+    padding: 4px 6px; border-radius: 6px; border: 1px solid transparent;
+  }
+  .throw.changed { border-color: var(--accent); background: rgba(90,200,250,.07); }
+  .throw label { font-size: 11.5px; }
+  .thctl { display: flex; gap: 6px; align-items: center; }
+  .thctl input[type=range] { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+  .thctl input[type=number] {
+    flex: 0 0 66px; width: 66px; font: inherit; font-size: 11.5px;
+    padding: 1px 4px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 5px;
+  }
+  .thwas { font-size: 10.5px; color: var(--dim); min-width: 62px; }
+
+  .thside {
+    flex: 0 0 250px; width: 250px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 11px;
+  }
+  .thsum { font-size: 12px; line-height: 1.6; min-height: 62px; }
+  .thsum.busy { opacity: .5; }
+  .thbig { font-size: 15px; }
+  .up { color: var(--good); }
+  .down { color: #ff6b6b; }
+  .thbtns { display: flex; gap: 6px; margin: 9px 0 8px; }
+  .thbtns button {
+    font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer;
+    background: var(--panel); color: inherit;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .thbtns button:hover:not(:disabled) { border-color: var(--accent); }
+  .thbtns button.go { margin-left: auto; border-color: var(--accent); color: var(--accent); }
+  .thbtns button:disabled { opacity: .4; cursor: default; }
+  .thscope { font-size: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .thhist { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .thhead { font-size: 11.5px; font-weight: 650; margin-bottom: 5px; }
+  .thhitem {
+    display: block; width: 100%; text-align: left; font: inherit; font-size: 11px;
+    background: transparent; color: inherit; cursor: pointer; line-height: 1.4;
+    border: 1px solid transparent; border-radius: 5px; padding: 3px 5px;
+  }
+  .thhitem:hover { border-color: var(--accent); }
+
+  /* --- 검출 개체 크롭 갤러리 ---
+     테두리 색이 형태 판정이다 — 봉상/원형/수동복구를 사진과 같은 색으로 쓴다. */
+  .croptools {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin: 0 0 10px; font-size: 12.5px;
+  }
+  .chip {
+    padding: 3px 11px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+  .chip.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .crops { display: grid; gap: 7px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+  .crop {
+    display: block; color: inherit; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 7px; overflow: hidden;
+  }
+  .crop:hover { border-color: var(--accent); text-decoration: none; }
+  /* 칸 높이는 고정, 이미지는 그 안에서 비율대로. 감싼 .cimg 가 이미지를 꼭
+     감싸므로 그 안에 넣은 스케일바의 % 가 곧 이미지 폭이 된다 — object-fit
+     여백에 어긋나지 않는다. */
+  .crop .cbox {
+    display: flex; align-items: center; justify-content: center;
+    height: 190px; background: #000;
+  }
+  .crop .cimg { position: relative; display: inline-block; line-height: 0; }
+  .crop .cimg img { display: block; max-height: 190px; max-width: 100%; }
+  .crop .csb {
+    position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+    font-size: 9.5px; line-height: 1.1; color: #fff; text-align: center;
+    text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none;
+  }
+  .crop .csb b {
+    display: block; height: 2.5px; background: #fff; border-radius: 1px;
+    margin-bottom: 1.5px; box-shadow: 0 0 2px rgba(0,0,0,.9);
+  }
+  .crop .cap {
+    display: flex; gap: 5px; align-items: center;
+    padding: 3px 6px 4px; font-size: 11px; line-height: 1.3;
+  }
+  .crop .dot {
+    width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+    margin-left: auto;
+  }
+  .crop .dot.warn { background: var(--warn); }
+  .crop .dot.good { background: var(--good); }
+  /* --- 분류 색 — `ClassDef.color` 와 같아야 한다 (migrations/0004). 온전 = 강조색,
+     파손 = 주황, 파편 = 옅은 보라, 비유공충 = 회색. **테이블과 CSS 두 곳에 있다**
+     (DiaRUGA 와 같은 미룸 — 화면 렌더링을 통째로 건드리는 일이라). 분류를 더할
+     때 여기도 함께 고친다. `none` 은 아직 분류가 없는 마스크다. --- */
+  .tile .thumbwrap polygon.foram, .vpimg polygon.foram, svg.masks polygon.foram
+    { stroke: rgb(196,181,253); fill: rgba(196,181,253,.28); }
+  .tile .thumbwrap polygon.broken, .vpimg polygon.broken, svg.masks polygon.broken
+    { stroke: rgb(255,180,84); fill: rgba(255,180,84,.28); }
+  .tile .thumbwrap polygon.fragment, .vpimg polygon.fragment, svg.masks polygon.fragment
+    { stroke: rgb(150,140,190); fill: rgba(150,140,190,.25); }
+  .tile .thumbwrap polygon.other, .vpimg polygon.other, svg.masks polygon.other
+    { stroke: rgb(130,130,130); fill: rgba(130,130,130,.22); }
+  .tile .thumbwrap polygon.none, .vpimg polygon.none, svg.masks polygon.none
+    { stroke: rgb(200,200,200); fill: rgba(200,200,200,.15); stroke-dasharray: 6 4; }
+  .badge.foram { border-color: rgb(196,181,253); color: rgb(196,181,253); }
+  .badge.broken { border-color: rgb(255,180,84); color: rgb(255,180,84); }
+  .badge.fragment { border-color: rgb(150,140,190); color: rgb(150,140,190); }
+  .badge.other { border-color: rgb(130,130,130); color: rgb(130,130,130); }
+  .crop.foram .cbox { border-color: rgb(196,181,253); }
+  .crop.broken .cbox { border-color: rgb(255,180,84); }
+  .crop.fragment .cbox { border-color: rgb(150,140,190); }
+  .crop.other .cbox { border-color: rgb(130,130,130); }
+  /* 시야 사진 화면의 마스크 덧그림 (2단계 — 3단계 검토 화면이 자기 CSS 를 가져온다) */
+  .shotview .big { position: relative; }
+  /* --- 검토 중인 묶음 표시 (DiaRUGA 088). `_batchtag.html` 이 목록·시야 목록·
+     시야 사진에 include 된다 — 관리 화면의 `.nowtag` 와 같은 뜻이지만 그 조각의
+     스타일은 관리 화면 셋에만 있어 여기 따로 적는다. 묶음이 안 켜져 있으면
+     경고색이다 — 그 상태에서는 뷰어가 검출을 하나도 안 그린다. --- */
+  .batchtag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    color: var(--accent); border: 1px solid var(--accent);
+    text-decoration: none;
+  }
+  .batchtag .lbl { font-weight: 500; color: var(--dim); }
+  .batchtag:hover { background: rgba(196,181,253,.12); }
+  .batchtag.none { color: var(--warn); border-color: var(--warn); }
+  .batchtag.none:hover { background: rgba(255,180,60,.10); }
+  .shotview .big svg.masks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .shotview .big svg.masks polygon { stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .shotview .big.hide-mask svg.masks { display: none; }
+
   {% block style %}{% endblock %}
 </style>
 <script>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DiaRUGA v0.29.0 `deploy/poll_nas.sh` 에서 왔다 — 검출 고리(4b)만 2단계로 미뤘다.
+# DiaRUGA v0.29.0 `deploy/poll_nas.sh` 에서 왔다 — SAM2 갈래(`--points-per-batch`)만 뺐다.
 # NAS 를 주기적으로 보고, 복사가 끝난 새 슬라이드를 끝까지 돌린다 (P03 5단계).
 #
 #   * * * * * /srv/ForGIA/bin/poll_nas.sh
@@ -46,7 +46,6 @@ HOST_PY="${FORGIA_PY:-$HOME/venv/ForGIA/bin/python}"
 LOG_DIR=/data3/ForGIA/logs
 LOCK=/tmp/ForGIA-poll.lock
 STABLE_MIN="${STABLE_MIN:-5}"   # 이만큼(분) 폴더가 안 변해야 가져온다
-PPB="${PPB:-16}"                # points-per-batch — 이 장비(3060 Ti 8 GB) 기준
 # **어느 묶음에 넣을지는 DB 가 정한다** (079). 예전에는 여기 이름 하나를 박아
 # 두었는데, 묶음이 여럿인 것이 기본이 되면서 그것이 문제가 됐다 — 새 슬라이드가
 # 그 묶음에만 들어가고, 사람이 다른 묶음으로 갈아타면 **빈 화면**이 된다.
@@ -196,10 +195,39 @@ echo "$TODO" | while IFS=$'\t' read -r slug state image_dir; do
     fi
 done
 
-# 4b) 검출 — **2단계에서 온다** (P01). DiaRUGA 는 여기서 묶음마다 `segment_diatoms.py`
-# 를 한 바퀴씩 돌린다(`batch_plan.py` 가 조리법을 인자 한 줄로 만들어 준다).
-# ForGIA 는 `segment_forams.py`·`classify_crops.py` 가 생기면 그 자리에 같은 모양으로
-# 붙인다 — GPU 잠금은 DiaRUGA 와 공유하는 시스템 경로다(P01 5절).
+# 4b) 검출 — **묶음마다 한 바퀴씩** (DiaRUGA 079).
+#
+# 묶음이 바깥 고리인 것이 요점이다. 검토 중인 묶음이 **모든 새 슬라이드에 대해**
+# 먼저 채워지고, 그다음 옛 회차가 따라온다 — 사람이 지금 보고 있는 화면이 가장
+# 빨리 메워진다. GPU 는 한 번에 하나만 도므로(잠금이 segment_forams 안에 있고,
+# 그 잠금 파일은 DiaRUGA 와 같은 것이다 — P01 5절) 이 순서가 곧 기다리는 순서다.
+#
+# 조리법은 셸에서 뜯지 않는다 — 파이썬이 인자 한 줄로 만들어 준다. DiaRUGA 의
+# `--points-per-batch` 갈래는 없다 — 백엔드가 YOLO 하나라 VRAM 인자가 없다.
+if [ -n "$DETECT_BATCH" ]; then
+    PLAN=$(printf '%s\t--backend yolo --scale 1.0' "$DETECT_BATCH")
+    say "DETECT_BATCH 가 주어졌다 — $DETECT_BATCH 하나만 돈다"
+else
+    PLAN=$(run "$T_SCAN" batch_plan.py --args 2>>"$LOG") || PLAN=""
+fi
+if [ -z "$PLAN" ]; then
+    say "채울 묶음이 없다 — 조리법(recipe)이 적힌 묶음이 없다. batch_plan.py 로 볼 것"
+fi
+
+printf '%s\n' "$PLAN" | while IFS=$'\t' read -r batch bargs; do
+    [ -n "$batch" ] || continue
+    say "=== 묶음 $batch ==="
+    echo "$TODO" | while IFS=$'\t' read -r slug state image_dir; do
+        [ -n "$slug" ] || continue
+        # shellcheck disable=SC2086
+        if ! run "$T_PIPE" segment_forams.py --slide "$slug" \
+                --batch "$batch" $bargs >>"$LOG" 2>&1; then
+            say "$slug: 검출 실패 ($batch)"
+            continue
+        fi
+        say "$slug: 검출 끝 ($batch)"
+    done
+done
 
 # 5) 자료를 바꿨으면 **화면이 그것을 그릴 수 있는지** 본다.
 #

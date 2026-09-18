@@ -1,0 +1,74 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `detections.html` 에서 왔다. `?obj=` 로 개체를 짚어 여는 것은 3단계 검토 화면이 받는다.
+{% endcomment %}
+{% load viewer_extras %}
+{% block title %}{{ label }} 검출 — ForGIA{% endblock %}
+{% block subtitle %}{{ label }} · 검출 목록 ·
+  {{ total }}개{% if shown_to %} 중 {{ shown_from }}~{{ shown_to }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="crumb"><a href="{% url 'index' %}">데이터셋</a> / <a href="{% url 'dataset' slug %}">{{ label }}</a> / 검출</div>
+{% comment %}
+  **이 표의 개체가 어느 회차의 것인지** (DiaRUGA 088). 아래 요약(최소·중앙·최대 µm)도
+  이 묶음의 숫자다 — 묶음을 갈면 분포가 통째로 달라진다.
+{% endcomment %}
+<div class="pagehead">
+  <h2>검출 후보</h2>
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
+</div>
+
+{% if not rows %}
+  <div class="note">아직 검출 결과가 없습니다.</div>
+{% else %}
+  <div class="stat-row" style="margin-bottom:16px">
+    <div class="stat"><b>{{ summary.n }}</b><span>후보</span></div>
+    <div class="stat"><b>{{ summary.min }}</b><span>최소 µm</span></div>
+    <div class="stat"><b>{{ summary.median }}</b><span>중앙값 µm</span></div>
+    <div class="stat"><b>{{ summary.mean }}</b><span>평균 µm</span></div>
+    <div class="stat"><b>{{ summary.max }}</b><span>최대 µm</span></div>
+  </div>
+
+  <div class="scroll">
+  <table>
+    <thead><tr>
+      <th>시야</th><th>출처</th><th>장축 µm</th><th>단축 µm</th>
+      <th>면적 µm²</th><th>신장비</th><th>채움율</th><th>확신도</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        {% comment %}
+          **개체를 들고 간다** (DiaRUGA 118). 이 표는 줄마다 개체 하나라 시야만 열면
+          어느 줄을 눌렀는지 화면에서 잃는다 — 근거는 `catalog.html` 의 같은 자리.
+        {% endcomment %}
+        <td><a href="{% url 'group' slug r.group_id %}?obj={{ r.key|urlencode }}&amp;img={{ r.image_id|default_if_none:'' }}"
+               title="이 개체가 있는 시야를 연다">{% if r.cell %}칸 {{ r.cell }} · {% endif %}g{{ r.group_id }}</a></td>
+        <td class="mono dim">{{ r.stem }}</td>
+        <td>{{ r.major_um }}</td>
+        <td>{{ r.minor_um }}</td>
+        <td>{{ r.area_um2 }}</td>
+        <td>{{ r.elongation }}</td>
+        <td>{{ r.fill_ratio }}</td>
+        <td>{{ r.conf|floatformat:2 }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% comment %}
+    표를 나눠 낸다. 위의 요약(최소·중앙값·최대)은 **전부를 기준으로** 낸 값이라
+    페이지를 넘겨도 변하지 않는다 — 보고 있는 쪽만 세면 그 값이 무엇의 중앙값인지
+    알 수 없게 된다.
+  {% endcomment %}
+  {% if prev_url or next_url %}
+  <div class="croptools" style="margin-top:14px">
+    {% if prev_url %}<a class="chip" href="{{ prev_url }}">← 이전</a>{% endif %}
+    {% if next_url %}<a class="chip" href="{{ next_url }}">다음 →</a>{% endif %}
+    <span class="dim">{{ total }}개 중 {{ shown_from }}~{{ shown_to }} ·
+      요약은 전체 기준입니다</span>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

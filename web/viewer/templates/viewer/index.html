@@ -1,7 +1,7 @@
 {% extends "viewer/base.html" %}
 {% comment %}
-  DiaRUGA v0.29.0 `index.html` 에서 왔다. 검출·검토 열은 2·3단계에서 되살린다 —
-  그 자리에 지금은 분획·분할·합성 열이 있다. 한국 갈래(`_map_kr`)는 없다.
+  DiaRUGA v0.29.0 `index.html` 에서 왔다. 검출 열은 2단계에서 되살렸고 검토 열은 3단계.
+  분획·분할·합성 열은 ForGIA 가 더한 것. 한국 갈래(`_map_kr`)는 없다.
 {% endcomment %}
 {% comment %}
   카드에서 표로 바꿨다. 슬라이드가 3장일 때는 카드가 읽혔지만 7장이 되면서
@@ -37,6 +37,7 @@
     최상위 메뉴**라, 제목 옆에 딸려 있으면 목록에 속한 것으로 읽힌다.
   {% endcomment %}
   <h2>데이터셋</h2>
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
   {% comment %}
     **표의 "검출" 칸이 어느 회차의 것인지**를 여기서 말한다 (DiaRUGA 088). 묶음을 갈면
     같은 슬라이드의 숫자가 통째로 달라지는데, 표시가 없으면 자료가 변한 것인지
@@ -148,6 +149,9 @@
       <th>시야</th>
       <th>평균 장수</th>
       <th title="all-in-focus 합성이 끝난 시야">합성</th>
+      <th title="{% for c in count_classes %}{{ c.label }}{% if not forloop.last %}·{% endif %}{% endfor %}만 셉니다 (파편·비유공충 제외)">검출</th>
+      <th>시야당</th>
+      {% for c in count_classes %}<th title="{{ c.label }}">{{ c.short }}</th>{% endfor %}
       <th class="revcol">검토</th>
       <th></th>
     </tr>
@@ -184,6 +188,9 @@
       <td>{{ g.totals.n_groups }}</td>
       <td></td>
       <td>{{ g.totals.n_stacks }}</td>
+      <td>{{ g.totals.n_counted }}</td>
+      <td></td>
+      {% for c in g.totals.counted %}<td>{{ c.n }}</td>{% endfor %}
       <td class="revcol">
         <div class="revnum">{{ g.totals.reviewed_groups }}<span class="dim">/{{ g.totals.n_groups }}</span></div>
         <div class="bar"><i style="width:{% widthratio g.totals.reviewed_groups g.totals.n_groups 100 %}%"></i></div>
@@ -233,6 +240,15 @@
       <td>{{ d.n_groups }}</td>
       <td>{{ d.mean_size }}</td>
       <td>{{ d.n_stacks }}</td>
+      {% if d.mean_counted is not None %}
+        <td title="검출 개체 {{ d.n_detected }}개 중 세는 분류{% if d.excluded %} — 합계에서 뺐습니다{% endif %}">{{ d.n_counted }}{% if d.excluded %}<span class="exmark">*</span>{% endif %}</td>
+        <td{% if d.detected_groups < d.n_groups %} class="partial" title="{{ d.n_groups }}개 시야 중 {{ d.detected_groups }}개만 검출됨 — 평균은 그 시야들 기준"{% endif %}>
+          {{ d.mean_counted }}{% if d.detected_groups < d.n_groups %}<span class="dim">*</span>{% endif %}
+        </td>
+        {% for c in d.counted %}<td>{{ c.n }}</td>{% endfor %}
+      {% else %}
+        <td colspan="{{ count_classes|length|add:2 }}" class="dim nodet">검출 결과 없음</td>
+      {% endif %}
       <td class="revcol">
         <div class="revnum">{{ d.reviewed_groups }}<span class="dim">/{{ d.n_groups }}</span></div>
         <div class="bar"><i style="width:{% widthratio d.reviewed_groups d.n_groups 100 %}%"></i></div>
@@ -255,6 +271,9 @@
       <td>{{ totals.n_groups }}</td>
       <td></td>
       <td>{{ totals.n_stacks }}</td>
+      <td>{{ totals.n_counted }}</td>
+      <td></td>
+      {% for c in totals.counted %}<td>{{ c.n }}</td>{% endfor %}
       <td class="revcol">
         <div class="revnum">{{ totals.reviewed_groups }}<span class="dim">/{{ totals.n_groups }}</span></div>
         <div class="bar"><i style="width:{% widthratio totals.reviewed_groups totals.n_groups 100 %}%"></i></div>
@@ -287,7 +306,7 @@
     <b>{% if g.no_core %}<span class="dim">지점 미지정</span>{% else %}{{ g.core }}{% endif %}</b>
     <span class="dim">{% if g.site %}{{ g.site }} · {% endif %}{{ g.n }}장{% if g.n_hidden %} <span class="hidemark" title="숨긴 슬라이드 {{ g.n_hidden }}장이 더 있습니다 — 아래 숫자에는 들어 있습니다">※{{ g.n_hidden }}</span>{% endif %}</span>
     <span class="gsum dim">사진 {{ g.totals.n_images }} · 시야 {{ g.totals.n_groups }} ·
-      합성 {{ g.totals.n_stacks }} · 검토 {{ g.totals.reviewed_groups }}/{{ g.totals.n_groups }}</span>
+      합성 {{ g.totals.n_stacks }} · 검출 {{ g.totals.n_counted }} · 검토 {{ g.totals.reviewed_groups }}/{{ g.totals.n_groups }}</span>
     {% comment %}
       표의 머리줄과 같은 길. summary 안의 링크는 클릭이 여닫기로도 가므로
       전파를 끊는다 — 누르면 페이지가 바뀌면서 묶음까지 접히면 안 된다.
@@ -330,6 +349,12 @@
       <div class="stat"><b>{{ d.n_groups }}</b><span>시야</span></div>
       <div class="stat"><b>{{ d.mean_size }}</b><span>평균 장수</span></div>
       <div class="stat"><b>{{ d.n_stacks }}</b><span>합성</span></div>
+      {% if d.mean_counted is not None %}
+        <div class="stat" title="검출 개체 {{ d.n_detected }}개 중 세는 분류"><b>{{ d.n_counted }}{% if d.excluded %}<span class="exmark">*</span>{% endif %}</b><span>검출</span></div>
+        <div class="stat"><b>{{ d.mean_counted }}</b><span>시야당</span></div>
+      {% else %}
+        <span class="dim nodet">검출 결과 없음</span>
+      {% endif %}
       <div class="stat"><b>{{ d.reviewed_groups }}<span class="dim" style="font-size:13px">/{{ d.n_groups }}</span></b><span>검토</span></div>
     </div>
   </div>

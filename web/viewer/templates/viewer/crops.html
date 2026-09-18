@@ -1,0 +1,90 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `crops.html` 에서 왔다 — 수동 복구·사람 지정·코멘트 거르개는 3단계에서 온다. 대신 탈락분(문턱이 떨어뜨린 것) 거르개를 뒀다.
+{% endcomment %}
+{% load viewer_extras %}
+{% block title %}{{ label }} 검출 결과 — ForGIA{% endblock %}
+{% block subtitle %}<a href="{% url 'index' %}">데이터셋</a> /
+  <a href="{% url 'dataset' slug %}">{{ label }}</a> / <b>검출 결과</b> ·
+  {{ total }}개{% if shown_to %} 중 {{ shown_from }}~{{ shown_to }}{% endif %}{% endblock %}
+{% block nav %}
+  <a href="{% url 'dataset' slug %}">그룹 목록</a>
+  <a href="{% url 'detections' slug %}">계측 표</a>
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  검출된 개체만 잘라 늘어놓는다. 시야를 하나씩 넘겨보지 않고 "이것들이 정말
+  규조각인가" 를 한 화면에서 훑는 것이 목적이다. 크기 내림차순이라 의심스러운
+  것(작고 밋밋한 것)이 뒤쪽에 모인다.
+{% endcomment %}
+{% comment %}
+  **여기 늘어놓는 개체가 어느 회차의 것인지** (DiaRUGA 088). 이 화면은 머리글이 없어
+  (제목은 위 띠에 있다) 표시만 한 줄로 세운다.
+
+  **`.croptools` 안에 넣지 않는다.** 그 줄은 전부 누르면 걸러지는 칩이라, 그
+  사이에 끼우면 **묶음도 고르는 것으로 읽힌다** — 여기는 읽는 표시다.
+{% endcomment %}
+<div class="pagehead">
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
+</div>
+
+<div class="croptools">
+  <span class="dim">형태</span>
+  <a class="chip{% if not cls %} on{% endif %}" href="?">전체</a>
+  {% for d in classes %}
+    <a class="chip{% if cls == d.key %} on{% endif %}" href="?cls={{ d.key }}">{{ d.label }}</a>
+  {% endfor %}
+  <a class="chip{% if gone %} on{% endif %}" href="?cls=gone" title="문턱이 떨어뜨린 것 — 크기·확신도 관문 밖">탈락분</a>
+  <span class="dim">방향</span>
+  <a class="chip{% if upright %} on{% endif %}" href="{{ upright_url }}"
+     title="마스크의 주축을 세로로 세워 방향을 통일한다">세움 {{ n_upright }}</a>
+  <a class="chip{% if not upright %} on{% endif %}" href="{{ flat_url }}"
+     title="사진에 있는 그대로">원래 방향</a>
+  <span class="dim" style="margin-left:auto">
+    크기 내림차순 · 클릭하면 그 시야로 간다
+  </span>
+</div>
+
+{% if not rows %}
+  <div class="note">
+    {% if cls %}이 형태로 걸러진 개체가 없다.{% else %}검출 결과가 없다.{% endif %}
+  </div>
+{% endif %}
+
+<div class="crops">
+{% for r in rows %}
+  {% comment %}
+    **개체를 들고 간다** (DiaRUGA 118). `obj`(개체 키)·`img`(그 개체가 있는 판)를 함께
+    보내면 검토 화면이 그 자리를 표시한다 — 근거는 `catalog.html` 의 같은 자리.
+  {% endcomment %}
+  <a class="crop{% if r.cls %} {{ r.cls }}{% endif %}{% if r.manual %} manual{% endif %}"
+     href="{% url 'group' slug r.group_id %}?obj={{ r.key|urlencode }}&amp;img={{ r.image_id|default_if_none:'' }}"
+     title="g{{ r.group_id }} · {{ r.stem }} · 장축 {{ r.major_um }} µm · 단축 {{ r.minor_um }} µm · 신장비 {{ r.elongation }} · 확신도 {{ r.conf|floatformat:2 }}{% if r.reject %} · 탈락: {{ r.reject }}{% endif %} · 눌러서 그 시야로">
+    {% comment %}
+      스케일바는 칸이 아니라 **이미지**에 붙는다. 칸에 붙이면 여백(letterbox)만큼
+      길이가 어긋난다. 감싼 요소가 이미지를 꼭 감싸므로 % 가 곧 이미지 폭이다.
+    {% endcomment %}
+    <span class="cbox"><span class="cimg">
+      <img loading="lazy" src="{% cropurl r.image_rel r.bbox_xywh 240 r.rot r.out %}"
+           alt="g{{ r.group_id }} #{{ r.id }}">
+      {% if r.sb %}<span class="csb" style="width:{{ r.sb.pct }}%"><b></b>{{ r.sb.label }}</span>{% endif %}
+    </span></span>
+    <span class="cap">
+      {{ r.major_um }} µm
+      <span class="dim">{% if r.cell %}칸 {{ r.cell }}{% else %}g{{ r.group_id }}{% endif %} · {{ r.conf|floatformat:2 }}</span>
+      {% if r.manual %}<span class="dot warn" title="수동 복구"></span>{% endif %}
+      {% if r.reviewed %}<span class="dot good" title="검토 완료된 시야"></span>{% endif %}
+    </span>
+  </a>
+{% endfor %}
+</div>
+
+{% if prev_url or next_url %}
+<div class="croptools" style="margin-top:14px">
+  {% if prev_url %}<a class="chip" href="{{ prev_url }}">← 이전 {{ per_page }}개</a>{% endif %}
+  {% if next_url %}<a class="chip" href="{{ next_url }}">다음 {{ per_page }}개 →</a>{% endif %}
+  <span class="dim">한 페이지에 {{ per_page }}개까지만 그린다 — 크롭이 개체마다 한 장이라 그 이상은 무겁다</span>
+</div>
+{% endif %}
+{% endblock %}

@@ -87,11 +87,18 @@ services:
       # 다시 굽지 않아도 된다. 이미지를 다시 구워야 하는 것은 **의존성이 바뀔 때**
       # 뿐이고, 그때는 판(PIPELINE_TAG)이 올라간다.
       FORGIA_APP: /app
+      # **GPU 잠금은 DiaRUGA 와 같은 파일이다** (P01 5절). 카드가 하나라 두 파이프
+      # 라인이 겹쳐 돌면 VRAM 이 모자라 둘 다 죽는다. `segment_forams.py` 의
+      # `gpu_lock()` 이 이 경로에 `flock` 을 건다 — DiaRUGA 쪽은 고칠 것이 없다,
+      # 저쪽은 자기 DATA_ROOT 의 `locks/gpu.lock` 을 그대로 쓴다
+      FORGIA_GPU_LOCK: /data3/DiaRUGA/locks/gpu.lock
     volumes:
       - /srv/ForGIA/db:/srv/ForGIA/db
       # 파이프라인·운영 스크립트. **읽기 전용** — 컨테이너가 고칠 것이 아니다
       - /srv/ForGIA/scripts:/srv/ForGIA/scripts:ro
       - /data3/ForGIA:/data3/ForGIA
+      # GPU 잠금 파일이 있는 디렉토리 — DiaRUGA 의 것을 **그 경로 그대로** 물린다
+      - /data3/DiaRUGA/locks:/data3/DiaRUGA/locks
       # NAS 는 **읽기 전용**. 촬영 원본을 건드리지 않는다 (P01 §1)
       - /nfs/temp-share/Forams:/nfs/temp-share/Forams:ro
     deploy:

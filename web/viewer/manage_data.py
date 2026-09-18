@@ -1,5 +1,5 @@
-"""DiaRUGA v0.29.0 `web/viewer/manage_data.py` 에서 1단계 것(층 넷 만들기·옮기기·지우기)만 왔다.
-묶음·조리법·학습 자료·코어 자료는 2·5단계다.
+"""DiaRUGA v0.29.0 `web/viewer/manage_data.py` 에서 왔다 — 층 넷(1단계)과 묶음·조리법(2단계).
+학습 자료·코어 자료는 4·5단계다.
 
 관리 화면이 쓰는 것 — 층을 세어 보이고, 만들고, 고치고, 지운다.
 
@@ -17,10 +17,12 @@
 - 관찰(`Slide`)은 여기서 안 지운다. 폴더가 만드는 것이고 그 아래에 **재생성
   불가한 교정**이 달려 있다 — 지우는 문을 아예 두지 않는다
 """
+from pathlib import Path
+
 from django.db import transaction
 from django.db.models import Count
 
-from .models import Locality, Sample, Site, Slide
+from .models import Locality, RunBatch, Sample, Site, Slide
 
 
 def overview() -> dict:
@@ -201,3 +203,198 @@ def _num(raw, cast=float):
     if not raw:
         return None
     return cast(raw)
+
+
+def batch_choices() -> list[dict]:
+    """고를 수 있는 묶음들과 **고르면 무엇이 달라지는지.**
+
+    **누르기 전에 보인다.** DiaRUGA 063 이 "지우기 문턱은 눌러 보기 전에 보여야 한다" 를
+    배운 자리와 같다 — 바꾸고 나서 "시야 56개가 비었다" 를 알면 늦다.
+
+    줄마다 셋을 센다:
+
+    | 칸 | 무엇 |
+    |---|---|
+    | `n_views` | 이 묶음이 덮는 시야 수 |
+    | `n_blank` | **이 묶음에 검출이 없어 빈 화면이 될 시야** |
+    | `n_objects` | 이 묶음이 낸 개체 수 (엔진이 낸 그대로 — 교정 전) |
+
+    검출이 있는 묶음만 낸다. 빈 묶음을 고르면 화면이 통째로 비는데, 그것을
+    고를 이유가 없다.
+    """
+    from .models import Candidate, Detection, RunBatch, Viewpoint
+
+    total = Viewpoint.objects.count()
+    out = []
+    for b in RunBatch.objects.filter(kind="detect").order_by("-started_at"):
+        dets = Detection.objects.filter(run__batch=b, is_current=True)
+        n_views = dets.values("viewpoint_id").distinct().count()
+        if not n_views:
+            continue
+        out.append({
+            "batch": b,
+            "on": b.for_review,
+            "n_views": n_views,
+            "n_blank": total - n_views,
+            "n_images": dets.count(),
+            "n_objects": Candidate.objects.filter(detection__in=dets,
+                                                  passed=True).count(),
+        })
+    return out
+
+
+def set_review_batch(batch_id: int) -> tuple[bool, str]:
+    """검토할 묶음을 바꾼다. **자료는 안 건드린다 — 깃발 하나다.**
+
+    그래서 **되돌리기가 같은 동작**이다. 예전 계획(DiaRUGA P09 5단계)은 검출 2,132행을
+    UPDATE 하는 것이었는데, 사본에서 해 보니 YOLO 가 없는 56 시야가 현재 검출을
+    잃고 빈 화면이 됐다 — 되돌리려면 또 한 번의 대량 UPDATE 였다(DiaRUGA P10 §1).
+
+    **서버가 다시 검사한다.** 화면이 고를 수 없게 해 두어도 그것은 막는 것이
+    아니다 — DiaRUGA 051·027 이 그 자리에서 났다.
+    """
+    from .models import Detection, Run, RunBatch
+
+    b = RunBatch.objects.filter(pk=batch_id, kind="detect").first()
+    if b is None:
+        return False, "그런 묶음이 없습니다."
+    if b.for_review:
+        return False, f"{b.label} 은 이미 검토 대상입니다."
+    # **검출이 없는 묶음은 안 받는다.** 고르면 화면이 통째로 빈다.
+    n_views = (Detection.objects.filter(run__batch=b, is_current=True)
+               .values("viewpoint_id").distinct().count())
+    if not n_views:
+        return False, f"{b.label} 에는 검출이 없습니다 — 먼저 돌려야 합니다."
+
+    was = RunBatch.objects.filter(for_review=True).first()
+    with transaction.atomic():
+        # 유일 제약이 하나만 허용하므로 **끄고 켠다** — 순서가 뒤바뀌면 막힌다.
+        RunBatch.objects.filter(for_review=True).update(for_review=False)
+        RunBatch.objects.filter(pk=b.pk).update(for_review=True)
+        # 누가 언제 어디서 어디로 — 되짚을 수 있어야 한다.
+        Run.objects.create(
+            kind="reconcile", batch=b, status="done",
+            params={"action": "set_review_batch",
+                    "from": was.label if was else None, "to": b.label},
+            counts={"views": n_views})
+    return True, (f"검토할 묶음을 {b.label} 로 바꿨습니다 — 시야 {n_views}개. "
+                  f"판정 캐시가 어긋날 수 있으니 refilter.py 를 돌리십시오.")
+
+
+# --- 운영: 조리법 ------------------------------------------------------------
+# 조리법에 담는 것. `segment_forams.py` 의 인자와 이름이 같다 — 화면에서 고친
+# 값이 그대로 명령줄이 되므로 여기서 이름을 바꾸면 안 된다 (`batch_plan.py`).
+RECIPE_NUM = ("scale", "min_um", "max_um", "conf_min", "yolo_conf", "yolo_imgsz")
+BACKENDS = ("yolo",)
+
+
+def create_batch(form) -> tuple[bool, str]:
+    """새 검출 묶음을 만든다 (DiaRUGA 084).
+
+    지금까지 묶음은 **파이프라인이 `--batch` 로 처음 쓸 때** 생겼다. 그래서
+    "다음 회차를 이렇게 돌리겠다" 를 미리 적어 둘 수가 없었다 — 조리법을 적으려면
+    묶음이 먼저 있어야 하는데, 묶음을 만들려면 검출을 한 번 돌려야 했다.
+
+    **조리법을 베껴 올 수 있다.** 새 회차는 대개 지난 회차에서 가중치만 바뀐
+    것이라, 빈 칸에서 시작하면 배율·크기 문턱 같은 것을 옮겨 적다가 틀린다.
+
+    **만드는 것으로 자료가 생기지는 않는다.** 새 슬라이드가 들어오면 폴러가
+    채우지만, **이미 있는 슬라이드는 사람이 한 번 돌려야 한다** — 몇 시간짜리
+    GPU 작업이라 화면이 조용히 시작하면 안 된다. 그 말을 응답에 담는다.
+    """
+    label = (form.get("label") or "").strip()
+    if not label:
+        return False, "묶음 이름을 적어 주십시오."
+    if RunBatch.objects.filter(kind="detect", label=label).exists():
+        return False, f"이미 있는 이름입니다: {label}"
+
+    recipe = {}
+    src_id = (form.get("copy_from") or "").strip()
+    src = None
+    if src_id:
+        src = RunBatch.objects.filter(pk=src_id).first()
+        if src is None:
+            return False, "베껴 올 묶음을 찾지 못했습니다."
+        recipe = dict(src.recipe or {})
+        # 베낀 것에는 **추측 표시를 물려주지 않는다** — 새 묶음의 가중치는
+        # 사람이 다시 보는 것이 맞고, 물려주면 경고가 영영 따라다닌다.
+        recipe.pop("weights_guessed", None)
+
+    b = RunBatch.objects.create(kind="detect", label=label,
+                                note=(form.get("note") or "").strip(),
+                                recipe=recipe)
+    tail = ""
+    if src is not None:
+        tail = f" ({src.label} 의 조리법을 베꼈습니다)"
+    if not recipe:
+        tail += " 조리법이 비어 있어 아직 자동으로 돌지 않습니다."
+    return True, (f"묶음 {b.label} 을 만들었습니다.{tail} "
+                  f"이미 있는 슬라이드는 사람이 한 번 돌려야 합니다.")
+
+
+def set_recipe(batch_id: int, form) -> tuple[bool, str]:
+    """묶음의 조리법을 적는다 (DiaRUGA 083).
+
+    **엔진이 비면 조리법을 통째로 비운다** = 그 묶음은 자동으로 안 돈다. 끝난
+    회차를 그대로 두는 것이 기본이고, 묶음이 늘 때마다 GPU 시간이 곱으로 늘기
+    때문이다.
+
+    **가중치 파일이 없어도 저장은 받는다.** 아직 학습이 안 끝났는데 조리법을
+    먼저 적어 둘 수 있어야 한다 — 대신 목록에서 "못 돌림" 으로 뜬다. 저장을
+    막으면 사람이 파일을 만들 때까지 아무것도 적어 둘 수 없다.
+    """
+    b = RunBatch.objects.filter(pk=batch_id).first()
+    if b is None:
+        return False, "그런 묶음이 없습니다."
+
+    backend = (form.get("backend") or "").strip()
+    if not backend:
+        if not b.recipe:
+            return False, f"{b.label} 은 이미 자동으로 돌지 않습니다."
+        b.recipe = {}
+        b.save(update_fields=["recipe"])
+        return True, f"{b.label} 의 조리법을 비웠습니다 — 자동으로 돌지 않습니다."
+    if backend not in BACKENDS:
+        return False, f"모르는 엔진입니다: {backend}"
+
+    recipe = {"backend": backend}
+    for k in RECIPE_NUM:
+        raw = (form.get(k) or "").strip()
+        if not raw:
+            continue
+        try:
+            recipe[k] = float(raw) if "." in raw or k == "scale" else int(raw)
+        except ValueError:
+            return False, f"{k} 가 숫자가 아닙니다: {raw}"
+    w = (form.get("weights") or "").strip()
+    if w:
+        recipe["weights"] = w
+    if form.get("all_images"):
+        recipe["all_images"] = True
+
+    if backend == "yolo" and not recipe.get("weights"):
+        return False, "YOLO 는 가중치가 있어야 합니다."
+
+    b.recipe = recipe
+    b.save(update_fields=["recipe"])
+    # 파일이 없으면 **저장은 되었지만 못 돈다** — 그것을 여기서 말해 준다.
+    from django.conf import settings                                # noqa: PLC0415
+    if backend == "yolo":
+        path = Path(w) if Path(w).is_absolute() else Path(settings.DATA_ROOT) / w
+        if not path.exists():
+            return True, (f"{b.label} 의 조리법을 적었습니다 — 다만 가중치 파일이 "
+                          f"아직 없습니다({path}). 생기기 전까지는 안 돕니다.")
+    return True, f"{b.label} 의 조리법을 적었습니다."
+
+
+def batches_with_recipe() -> list:
+    """조리법 화면이 쓰는 목록 — **검출 묶음 전부**. 조리법이 없는 것도 낸다.
+
+    `batch_choices()` 는 "고를 수 있는 것" 이라 검출이 있는 것만 내는데, 여기는
+    **아직 아무것도 안 돌린 새 묶음에도 조리법을 적어야** 하므로 다르다.
+    """
+    rows = list(RunBatch.objects.filter(kind="detect")
+                .annotate(n_detections=Count("runs__detections", distinct=True))
+                .order_by("-for_review", "-started_at"))
+    return rows
+

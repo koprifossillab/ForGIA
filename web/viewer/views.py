@@ -1,35 +1,53 @@
-"""뷰. DiaRUGA v0.29.0 `web/viewer/views.py`(3,120줄)에서 1단계 화면만 왔다 —
-목록 · 시야 목록 · 시야 사진 · 지점 · 정보 편집 · 시스템 설정(자료·파이프라인) ·
-`/img` · `/healthz`. 나머지 화면은 단계마다 온다 (P01 4절).
+"""뷰. DiaRUGA v0.29.0 `web/viewer/views.py`(3,120줄)에서 왔다 — 1단계: 목록 ·
+시야 목록 · 시야 사진 · 지점 · 정보 편집 · 시스템 설정(자료·파이프라인) · `/img` ·
+`/healthz`. 2단계: 검출 갤러리(`crops`) · 계측 표(`detections`) · `/crop` · 문턱
+조정 · 시스템 설정(운영). 나머지 화면은 단계마다 온다 (P01 4절).
 """
 import hashlib
+import json
+import math
 import os
 import sys
 import time
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import (FileResponse, Http404, HttpResponseBadRequest,
+                         JsonResponse)
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
+from django.views.decorators.http import require_POST
 
-from . import antarctica, data, manage_data, ross
-from .models import (Frame, Locality, Sample, Site, Slide, Stack,
-                     Viewpoint)
+from . import antarctica, data, manage_data, ross, thresholds as th
+from .models import (Detection, Frame, Locality, Run, Sample, Site, Slide,
+                     Stack, ThresholdSet, Viewpoint)
 
-# **뷰어가 저장소의 `ops/db_sentinel.py` 를 쓴다** — `/healthz` 가 무결성 깃발을
-# 읽는다. 저장소 뿌리는 `web/viewer` 의 두 단계 위다. **컨테이너 안에서도 같다** —
-# 이미지가 저장소를 통째로 `/app` 에 담으므로 `/app/ops` 다. (DiaRUGA 100)
+# **뷰어가 저장소의 스크립트 둘을 함께 쓴다** (DiaRUGA 100) — `pipeline/judge.py`
+# (판정 규칙: 뷰어와 파이프라인이 **같은 것**을 봐야 한다) · `ops/db_sentinel.py`
+# (무결성 깃발: `/healthz` 가 읽는다). 저장소 뿌리는 `web/viewer` 의 두 단계 위다.
+# **컨테이너 안에서도 같다** — 이미지가 저장소를 통째로 `/app` 에 담는다.
 _ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "pipeline"))
 sys.path.insert(0, str(_ROOT / "ops"))
+import judge  # noqa: E402
 import db_sentinel  # noqa: E402
+
+# 문턱 조정 화면에 보여줄 순서와 이름 — (칸, 이름, 설명, 최소, 최대, 눈금)
+THRESHOLD_FIELDS = [
+    ("conf_min", "확신도 하한", "검출기 conf — 낮으면 티끌까지 들어온다", 0, 1, 0.01),
+    ("min_um", "크기 하한", "타원 장축 µm — 픽킹 분획과 맞춘다", 0, 500, 1),
+    ("max_um", "크기 상한", "타원 장축 µm", 100, 5000, 10),
+]
 
 # `/healthz` 가 세는 테이블. 단계마다 늘어난다.
 HEALTH_TABLES = [("site", Site), ("locality", Locality),
                  ("sample", Sample), ("slide", Slide),
-                 ("viewpoint", Viewpoint), ("frame", Frame), ("stack", Stack)]
+                 ("viewpoint", Viewpoint), ("frame", Frame), ("stack", Stack),
+                 ("detection", Detection)]
 
 
 def _with_hidden(request) -> bool:
@@ -63,6 +81,10 @@ def index(request):
         "totals": data.datasets_total(rows),
         "with_hidden": with_hidden,
         "n_hidden": sum(1 for r in rows if r["hidden"]),
+        # 표의 분류 열. 줄이 아니라 여기서 정한다 — 열 수가 줄마다 같아야 한다
+        "count_classes": data.counted_classes(),
+        # **표의 "검출" 칸이 어느 묶음의 것인가** (DiaRUGA 088)
+        "review_batch": data.review_batch_label(),
         "antmap": (_map_ctx(data.map_points(area["selected"], with_hidden))
                    if show_map else None),
     })
@@ -309,6 +331,367 @@ def dataset_edit(request, slug):
 
 
 
+# --- 검출 갤러리 · 계측 표 · 크롭 ---------------------------------------------------
+DETECT_PER_PAGE = 300
+
+
+def detections(request, slug):
+    """슬라이드 전체의 검출 후보를 한 표로 모아 크기 분포를 본다."""
+    label = data.slide_label(slug)
+    if label is None:
+        raise Http404(f"unknown dataset: {slug}")
+    rows = data.candidate_rows(slug)
+    rows.sort(key=lambda r: -(r["long_side_um"] or 0))
+    # **요약은 전부를 기준으로 낸다** — 보고 있는 쪽만 세면 페이지마다 중앙값이 달라진다
+    sizes = sorted(r["major_um"] or r["long_side_um"] or 0 for r in rows)
+    summary = None
+    if sizes:
+        summary = {"n": len(sizes), "min": round(sizes[0], 1),
+                   "median": round(sizes[len(sizes) // 2], 1),
+                   "max": round(sizes[-1], 1),
+                   "mean": round(sum(sizes) / len(sizes), 1)}
+    total = len(rows)
+    try:
+        offset = max(0, int(request.GET.get("offset", 0)))
+    except ValueError:
+        offset = 0
+    page = rows[offset:offset + DETECT_PER_PAGE]
+    return render(request, "viewer/detections.html", {
+        "slug": slug, "label": label, "rows": page, "summary": summary,
+        "total": total, "review_batch": data.review_batch_label(),
+        "shown_from": offset + 1 if page else 0, "shown_to": offset + len(page),
+        "prev_url": (f"?offset={max(0, offset - DETECT_PER_PAGE)}" if offset else None),
+        "next_url": (f"?offset={offset + DETECT_PER_PAGE}"
+                     if offset + DETECT_PER_PAGE < total else None)})
+
+
+CROPS_PER_PAGE = 500
+
+
+def crops(request, slug):
+    """검출된 개체만 잘라 썸네일로 늘어놓는다 — "이것들이 정말 유공충인가" 를 한 화면에서."""
+    label = data.slide_label(slug)
+    if label is None:
+        raise Http404(f"unknown dataset: {slug}")
+    cls = request.GET.get("cls") or ""
+    gone = cls == "gone"
+    rows = data.candidate_rows(slug, gone=gone)
+    keys = {c["key"] for c in data.class_list()}
+    if cls in keys:
+        rows = [r for r in rows if r.get("cls") == cls]
+    rows.sort(key=lambda r: -(r["long_side_um"] or 0))
+
+    upright = request.GET.get("upright", "1") != "0"
+    n_upright = 0
+    for r in rows:
+        geo = data.crop_geometry(r, rotate=upright)
+        if not geo:
+            continue
+        r["rot"], r["out"] = geo["rot"], geo["out"]
+        if geo["rot"]:
+            n_upright += 1
+        r["sb"] = data.scalebar_for(geo["out_w"], r.get("um_per_pixel") or 0)
+
+    total = len(rows)
+    try:
+        offset = max(0, int(request.GET.get("offset", 0)))
+    except ValueError:
+        offset = 0
+    page = rows[offset:offset + CROPS_PER_PAGE]
+
+    def page_url(off):
+        q = {"offset": off}
+        if cls:
+            q["cls"] = cls
+        if not upright:
+            q["upright"] = 0
+        return f"?{urlencode(q)}"
+
+    return render(request, "viewer/crops.html", {
+        "slug": slug, "label": label, "rows": page,
+        "review_batch": data.review_batch_label(),
+        "classes": data.class_list(), "cls": cls, "gone": gone,
+        "upright": upright, "n_upright": n_upright,
+        "upright_url": f"?{urlencode({'cls': cls} if cls else {})}",
+        "flat_url": f"?{urlencode(dict({'cls': cls} if cls else {}, upright=0))}",
+        "total": total, "shown_from": offset + 1 if page else 0,
+        "shown_to": offset + len(page), "per_page": CROPS_PER_PAGE,
+        "prev_url": page_url(max(0, offset - CROPS_PER_PAGE)) if offset else None,
+        "next_url": (page_url(offset + CROPS_PER_PAGE)
+                     if offset + CROPS_PER_PAGE < total else None)})
+
+
+def crop(request):
+    """`?p=<상대경로>&b=<x,y,w,h>&w=<출력 폭>[&rot=&out=]` — 개체 하나만 잘라 낸다.
+    개체가 수백이라 매번 자르면 갤러리가 못 쓸 정도로 느려지므로 축소본처럼 캐시한다."""
+    path = data.safe_image_path(request.GET.get("p", ""))
+    if path is None:
+        raise Http404("image not found or outside allowed dirs")
+    try:
+        box = [int(round(float(v))) for v in request.GET.get("b", "").split(",")]
+    except ValueError:
+        return HttpResponseBadRequest("bad bbox")
+    if len(box) != 4 or box[2] <= 0 or box[3] <= 0:
+        return HttpResponseBadRequest("bad bbox")
+    try:
+        width = max(32, min(int(request.GET.get("w", 200)), 512))
+    except ValueError:
+        return HttpResponseBadRequest("bad width")
+    raw_pad = request.GET.get("pad")
+    try:
+        pad = None if raw_pad is None else max(0, min(int(raw_pad), 512))
+    except ValueError:
+        return HttpResponseBadRequest("bad pad")
+    rot = request.GET.get("rot")
+    size = request.GET.get("out")
+    try:
+        rot = None if rot is None else max(-180.0, min(float(rot), 180.0))
+        if size is not None:
+            ow, oh = (int(v) for v in size.split(","))
+            if not (0 < ow <= 4096 and 0 < oh <= 4096):
+                raise ValueError("out")
+            size = (ow, oh)
+    except ValueError:
+        return HttpResponseBadRequest("bad rot/out")
+    if rot is not None and size is not None:
+        out = _upright_thumb(path, box, width, rot, size)
+    else:
+        out = _crop_thumb(path, box, width, pad)
+    if out is None:
+        raise Http404("cannot crop")
+    return _jpeg(request, out)
+
+
+def _upright_thumb(path, box, width, rot, size):
+    """개체를 세워서 잘라 낸 축소본 — 한 번의 affine 으로 회전과 자르기를 함께.
+    회전 규약은 `data.rotated_extent()` 와 같아야 한다."""
+    from PIL import Image
+
+    x, y, w, h = box
+    ow, oh = size
+    stat = path.stat()
+    key = f"up|{path}|{stat.st_mtime_ns}|{x},{y},{w},{h}|{rot:.2f}|{ow}x{oh}|{width}"
+    name = hashlib.sha1(key.encode()).hexdigest()[:20] + ".jpg"
+    out = settings.THUMB_CACHE / name
+    if out.exists():
+        return out
+    rad = math.radians(rot)
+    cos, sin = math.cos(rad), math.sin(rad)
+    scx, scy = x + w / 2.0, y + h / 2.0
+    ocx, ocy = ow / 2.0, oh / 2.0
+    a1, b1, d1, e1 = cos, sin, -sin, cos
+    c1 = scx - (a1 * ocx + b1 * ocy)
+    f1 = scy - (d1 * ocx + e1 * ocy)
+    try:
+        settings.THUMB_CACHE.mkdir(parents=True, exist_ok=True)
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            piece = img.transform((ow, oh), Image.AFFINE, (a1, b1, c1, d1, e1, f1),
+                                  resample=Image.BICUBIC)
+            piece.thumbnail((width, width), Image.LANCZOS)
+            tmp = out.with_suffix(".tmp")
+            piece.save(tmp, "JPEG", quality=84)
+            tmp.replace(out)
+    except OSError:
+        return None
+    return out
+
+
+def _crop_thumb(path, box, width, pad=None):
+    from PIL import Image
+
+    x, y, w, h = box
+    stat = path.stat()
+    key = f"crop|{path}|{stat.st_mtime_ns}|{x},{y},{w},{h}|{width}|{pad}"
+    name = hashlib.sha1(key.encode()).hexdigest()[:20] + ".jpg"
+    out = settings.THUMB_CACHE / name
+    if out.exists():
+        return out
+    try:
+        settings.THUMB_CACHE.mkdir(parents=True, exist_ok=True)
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            if pad is None:
+                pad = max(4, round(0.08 * max(w, h)))
+            left, top = max(0, x - pad), max(0, y - pad)
+            right, bottom = min(img.width, x + w + pad), min(img.height, y + h + pad)
+            if right <= left or bottom <= top:
+                return None
+            piece = img.crop((left, top, right, bottom))
+            piece.thumbnail((width, width), Image.LANCZOS)
+            tmp = out.with_suffix(".tmp")
+            piece.save(tmp, "JPEG", quality=84)
+            tmp.replace(out)
+    except OSError:
+        return None
+    return out
+
+
+# --- 문턱 조정 ---------------------------------------------------------------------
+def threshold_page(request, slug=None):
+    """한 시야를 보며 정한 값이 시야 전부에 걸린다 — 영향받는 시야를 영향 큰 순으로."""
+    label = data.slide_label(slug) if slug else None
+    if slug and label is None:
+        raise Http404(f"unknown dataset: {slug}")
+    scales = data.scales_by_slide()
+    return render(request, "viewer/thresholds.html", {
+        "slug": slug or "", "label": label or "전체",
+        "fields": THRESHOLD_FIELDS,
+        "current": th.current_values(slug),
+        "defaults": dict(judge.DEFAULTS),
+        "presets": list(ThresholdSet.objects.values("id", "name", *judge.FIELDS)),
+        "spread": th.threshold_spread(slug),
+        "scale_mixed": len(set(scales.values())) > 1,
+        "scale_list": " · ".join(f"{s} {v:g}" for s, v in sorted(scales.items())),
+    })
+
+
+@require_POST
+def threshold_preview(request):
+    """문턱을 받아 전체 영향과 시야별 뒤집힘을 돌려준다. 저장하지 않는다."""
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return HttpResponseBadRequest("bad json")
+    slug = payload.get("slug") or None
+    try:
+        values = th.clean_values(payload.get("values") or {}, th.current_values(slug))
+    except ValueError as e:
+        return HttpResponseBadRequest(f"bad threshold: {e}")
+    pool = th.load_pool(slug)
+    result = th.preview(values, pool)
+    index = th.detection_index(slug)
+    rows = []
+    for did, r in result["per_det"].items():
+        meta = index.get(did)
+        if not meta:
+            continue
+        flips = len(r["added"]) + len(r["removed"])
+        rows.append({**meta, "before": r["before"], "after": r["after"],
+                     "added": r["added"], "removed": r["removed"], "flips": flips})
+    rows.sort(key=lambda x: (-x["flips"], x["slug"], x["gid"]))
+    touched = [r for r in rows if r["flips"]]
+    only_touched = bool(payload.get("only_touched", True))
+    limit = max(1, min(int(payload.get("limit") or 24), 200))
+    if only_touched:
+        shown = touched[:limit]
+    else:
+        head = touched[:max(1, limit // 2)]
+        seen = {r["detection_id"] for r in head}
+        rest = sorted((r for r in rows if r["detection_id"] not in seen),
+                      key=lambda x: (x["slug"], x["gid"]))
+        shown = head + rest[:limit - len(head)]
+    verdicts = {r["detection_id"]: result["per_det"][r["detection_id"]]["verdict"]
+                for r in shown}
+    return JsonResponse({"ok": True, "values": values, "total": result["total"],
+                         "classes": th.class_counts_from(result["per_det"]),
+                         "rows": shown, "n_rows": len(rows), "n_touched": len(touched),
+                         "only_touched": only_touched, "verdicts": verdicts})
+
+
+@require_POST
+def threshold_apply(request):
+    """미리보기와 같은 판정을 실제로 저장한다."""
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return HttpResponseBadRequest("bad json")
+    slug = payload.get("slug") or None
+    try:
+        values = th.clean_values(payload.get("values") or {}, th.current_values(slug))
+    except ValueError as e:
+        return HttpResponseBadRequest(f"bad threshold: {e}")
+    run = Run.objects.create(kind="refilter", status="running",
+                             params={"values": values, "slide": slug or "*", "via": "viewer"})
+    try:
+        out = th.apply_values(values, slug, run)
+    except Exception as e:                       # noqa: BLE001
+        run.status = "failed"
+        run.error = str(e)
+        run.finished_at = timezone.now()
+        run.save()
+        raise
+    run.status = "done"
+    run.finished_at = timezone.now()
+    run.save()
+    return JsonResponse({"ok": True, "run": run.pk, **out})
+
+
+def threshold_masks(request):
+    """시야 하나의 폴리곤 — 문턱과 무관하니 한 번만 받고 판정만 갈아 끼운다."""
+    try:
+        det_id = int(request.GET.get("det", ""))
+    except ValueError:
+        return HttpResponseBadRequest("bad det")
+    det = Detection.objects.reviewing().filter(pk=det_id).first()
+    if det is None:
+        raise Http404("unknown detection")
+    masks = []
+    for c in det.candidates.all():
+        pts = data.mask_points({"polygon": c.polygon})
+        if pts:
+            masks.append({"k": c.mask_key, "p": pts})
+    resp = JsonResponse({"ok": True, "masks": masks})
+    resp["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
+def threshold_history(request, slug=None):
+    """문턱을 언제 무엇으로 바꿨나. 되돌리기의 근거."""
+    runs = Run.objects.filter(kind="refilter", status="done").order_by("-started_at")[:50]
+    rows = []
+    for r in runs:
+        v = (r.params or {}).get("values") or (r.params or {}).get("overrides") or {}
+        changed = {k: val for k, val in v.items()
+                   if abs(float(val) - judge.DEFAULTS.get(k, val)) > 1e-9}
+        rows.append({"id": r.pk, "at": r.started_at.strftime("%m-%d %H:%M"),
+                     "slide": (r.params or {}).get("slide", "*"),
+                     "via": (r.params or {}).get("via", "cli"),
+                     "values": v, "changed": changed, "counts": r.counts or {}})
+    return JsonResponse({"ok": True, "rows": rows})
+
+
+# --- 시스템 설정 · 운영 --------------------------------------------------------------
+def system_settings_ops(request):
+    """검토할 묶음과 조리법 (DiaRUGA 083). 자료 화면과 갈라 둔다 — 묻는 것이 다르다."""
+    if request.method == "POST":
+        p = request.POST
+        act = (p.get("act") or "").strip()
+        if act == "review_batch":
+            ok, m = manage_data.set_review_batch(_num(p.get("batch"), int) or 0)
+        elif act == "recipe":
+            ok, m = manage_data.set_recipe(_num(p.get("batch"), int) or 0, p)
+        elif act == "new_batch":
+            ok, m = manage_data.create_batch(p)
+        else:
+            ok, m = False, "모르는 동작입니다."
+        return redirect(f"{reverse('system_settings_ops')}?{'msg' if ok else 'err'}={m}")
+    plan = [{**r, "args": " ".join(_recipe_args(r["recipe"]))}
+            for r in data.batches_to_run()]
+    return render(request, "viewer/system_settings_ops.html", {
+        "msg": request.GET.get("msg", ""), "err": request.GET.get("err", ""),
+        "batches": manage_data.batch_choices(),
+        "batches_all": manage_data.batches_with_recipe(),
+        "backends": manage_data.BACKENDS, "plan": plan,
+    })
+
+
+def _recipe_args(recipe: dict) -> list:
+    """조리법을 명령줄 모양으로 — 화면이 보여줄 뿐 여기서 돌리지 않는다.
+    `batch_plan.py` 와 같은 것을 내야 한다."""
+    out = []
+    for k, flag in (("backend", "--backend"), ("scale", "--scale"),
+                    ("min_um", "--min-um"), ("max_um", "--max-um"),
+                    ("conf_min", "--conf-min"),
+                    ("weights", "--weights"), ("yolo_conf", "--yolo-conf"),
+                    ("yolo_imgsz", "--yolo-imgsz")):
+        if recipe.get(k) is not None:
+            out += [flag, str(recipe[k])]
+    if recipe.get("all_images"):
+        out.append("--all-images")
+    return out
+
+
 # --- 시스템 설정 ---------------------------------------------------------------
 def system_settings(request):
     """관리 화면 — 지역·지점·시료를 만들고 고치고 지운다. 소속도 여기서 옮긴다.
@@ -353,7 +736,8 @@ def system_settings_pipeline(request):
 
 def settings_redirect(request, tab=""):
     """옛 `/manage/…` 주소를 `/system-settings/…` 로 (DiaRUGA 와 같은 주소 모양). 302."""
-    name = {"pipeline": "system_settings_pipeline"}.get(tab, "system_settings")
+    name = {"ops": "system_settings_ops",
+            "pipeline": "system_settings_pipeline"}.get(tab, "system_settings")
     url = reverse(name)
     if request.META.get("QUERY_STRING"):
         url = f"{url}?{request.META['QUERY_STRING']}"
@@ -380,10 +764,18 @@ def image(request):
     return _jpeg(request, thumb or path)
 
 
+_CTYPE = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+
+
 def _jpeg(request, path):
-    resp = FileResponse(open(path, "rb"), content_type="image/jpeg")
-    # 주소에 mtime 이 들어 있어(`thumb` 태그의 `v=`) 오래 캐시해도 안전하다
-    resp["Cache-Control"] = "public, max-age=604800"
+    """이미지 응답. `v=`(원본 mtime)가 붙은 주소면 영구 캐시를 허용한다 — 그림이
+    바뀌면 주소가 바뀐다. 축소본은 늘 JPEG 이지만 원본은 PNG 일 수 있다."""
+    ctype = _CTYPE.get(path.suffix.lower(), "image/jpeg")
+    resp = FileResponse(path.open("rb"), content_type=ctype)
+    if request.GET.get("v"):
+        resp["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        resp["Cache-Control"] = "no-cache"
     return resp
 
 

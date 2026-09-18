@@ -1,5 +1,5 @@
 {% comment %}
-  DiaRUGA v0.29.0 `_system_settings_nav.html` 에서 왔다 — 1단계에는 자료·파이프라인 탭뿐이다.
+  DiaRUGA v0.29.0 `_system_settings_nav.html` 에서 왔다 — 학습 자료 탭은 4단계에서 온다.
 {% endcomment %}
 {% comment %}
   관리 화면의 탭줄 (DiaRUGA 083). 셋으로 갈랐다 — **묻는 것이 다르기 때문**이다:
@@ -15,7 +15,8 @@
 {% endcomment %}
 <nav class="mnav">
   <a href="{% url 'system_settings' %}"{% if here == "data" %} class="on"{% endif %}>자료</a>
-  {% comment %} 운영(묶음·조리법) 탭은 2단계, 학습 자료 탭은 2·4단계에서 온다 {% endcomment %}
+  <a href="{% url 'system_settings_ops' %}"{% if here == "ops" %} class="on"{% endif %}>운영</a>
+  {% comment %} 학습 자료 탭은 4단계(분류기)에서 온다 {% endcomment %}
   <a href="{% url 'system_settings_pipeline' %}"{% if here == "pipeline" %} class="on"{% endif %}>파이프라인</a>
   {% comment %}
     **미리보기** — 머리줄에 있던 것을 여기로 옮겼다 (사용자 요청 2026-08-08).

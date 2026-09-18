@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """DB 의 무결성을 검사한다. **예외가 나지 않고 그냥 틀린 상태**를 잡는 것이 목적이다.
 
-DiaRUGA v0.29.0 `ops/check_db.py`(925줄 · 검사 열둘)에서 1단계 것만 왔다 —
-**뼈대(5번)와 층(7번)**. 판정·검출·교정·분류·묶음·카탈로그·도감 검사는 그
-테이블이 오는 단계에서 같은 번호로 되돌아온다. 번호를 DiaRUGA 와 맞춰 두는
-이유는 `CLAUDE.md` 의 함정 목록이 "`check_db` 7번이 센다" 처럼 번호로 부르기
-때문이다.
+DiaRUGA v0.29.0 `ops/check_db.py`(925줄 · 검사 열둘)에서 왔다 — 1단계: 뼈대(5)·
+층(7). 2단계: 판정 캐시(1)·현재 검출(2)·분류(4)·문턱(6). 교정·묶음·카탈로그·
+도감 검사는 그 테이블이 오는 단계에서 같은 번호로 되돌아온다. 번호를 DiaRUGA 와
+맞춰 두는 이유는 `CLAUDE.md` 의 함정 목록이 "`check_db` 7번이 센다" 처럼 번호로
+부르기 때문이다.
 
     python check_db.py
     python check_db.py --slide 260918_rs23-gc03_71cm_125um
     python check_db.py -v          # 어긋난 것의 예를 보여준다
 
 돌려야 할 때:
-  - 반입·그룹핑·합성 뒤 (`poll_nas.sh` 가 돌린 뒤 숫자가 이상할 때)
+  - 반입·그룹핑·합성·검출 뒤 (`poll_nas.sh` 가 돌린 뒤 숫자가 이상할 때)
+  - `refilter`·`segment_forams` 를 돌린 뒤 · `judge.py` 의 규칙을 고친 뒤
   - 시야를 가르거나 소속을 옮긴 뒤
 """
 import argparse
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import django
@@ -35,7 +36,11 @@ sys.path.insert(0, str(APP / "pipeline"))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "forgiaweb.settings")
 django.setup()
 
-from viewer.models import (Frame, Image, Locality, Sample,           # noqa: E402
+from django.db.models import Count                                  # noqa: E402
+
+import judge                                                        # noqa: E402
+from viewer.models import (Candidate, ClassDef, Detection, Frame,   # noqa: E402
+                           Image, Locality, RunBatch, Sample,
                            Slide, Stack, Viewpoint)
 
 VERBOSE = False
@@ -54,6 +59,119 @@ def report(name, bad, total, why="", examples=()):
             for e in list(examples)[:5]:
                 print(f"       {e}")
     return ok
+
+
+def dets(slug=None):
+    """**뷰어가 보여줄 검출** — 검토 대상 묶음의, 그 묶음 안 최신 것 (DiaRUGA P10)."""
+    qs = (Detection.objects.reviewing()
+          .select_related("thresholds", "viewpoint", "viewpoint__slide"))
+    if slug:
+        qs = qs.filter(viewpoint__slide__slug=slug)
+    return qs
+
+
+# --- 1. 판정이 (지표 + 문턱) 과 맞는가 --------------------------------------
+def check_verdicts(slug=None):
+    """`passed`·`cls`·`reject` 는 저장된 사실이 아니라 **순수 함수의 캐시**다.
+
+    지표(불변) + 문턱(파라미터) 이면 판정이 결정된다. 다시 계산해서 저장된 값과
+    같아야 한다. 어긋나는 경우 — refilter 가 도는 중에 끊겼다 · `Detection.thresholds`
+    만 바꾸고 `Candidate` 를 안 고쳤다 · `judge.py` 의 규칙을 고치고 재판정을 잊었다.
+    """
+    bad = total = 0
+    ex = []
+    for det in dets(slug).prefetch_related("candidates"):
+        th = judge.Thresholds(**(det.thresholds.as_dict() if det.thresholds
+                                 else judge.DEFAULTS))
+        cands = list(det.candidates.all())
+        total += len(cands)
+        recs = [{"_pk": c.pk, "bbox_xywh": c.bbox_xywh, "area_px": c.area_px,
+                 "shape_ok": c.shape_ok, "major_um": c.major_um,
+                 "long_side_um": c.long_side_um, "predicted_iou": c.predicted_iou}
+                for c in cands]
+        kept, rejected = judge.apply(recs, th)
+        want = {r["_pk"]: (True, r["cls"] or "", "") for r in kept}
+        for r in rejected:
+            want[r["_pk"]] = (False, r.get("cls") or "", r["reject"])
+        for c in cands:
+            w = want.get(c.pk)
+            if w is None:
+                continue
+            got = (c.passed, c.cls or "", c.reject or "")
+            if got != w:
+                bad += 1
+                if len(ex) < 5:
+                    ex.append(f"{det.viewpoint} {c.mask_key}: 저장 {got} != 계산 {w}")
+    report("판정 == 지표 + 문턱 (캐시가 맞는가)", bad, total,
+           "재판정이 필요하다: python refilter.py", ex)
+
+
+# --- 2. 이미지마다 보여줄 검출이 하나 이하인가 ----------------------------------
+def check_current(slug=None):
+    """검토 대상 묶음 안에서만 센다 — 다른 묶음의 검출은 같은 이미지에 있는 것이 정상."""
+    qs = Viewpoint.objects.all()
+    if slug:
+        qs = qs.filter(slide__slug=slug)
+    counts = dict(Detection.objects.reviewing().filter(viewpoint__in=qs)
+                  .values_list("image").annotate(n=Count("id")))
+    many = {i: n for i, n in counts.items() if n > 1}
+    report("이미지마다 보여줄 검출이 하나 이하", len(many), len(counts) or 1,
+           "한 이미지에 둘 이상이다 — 어느 것을 보여줄지 알 수 없다",
+           [f"image #{i}: {n}개" for i, n in list(many.items())[:5]])
+    # **검토 대상이 정해져 있는가.** 없으면 뷰어가 아무것도 안 보여준다 — 500 도
+    # 404 도 아니고 그냥 빈 화면이다. 검출이 하나도 없는 DB(1단계)에서는 묶음도
+    # 없는 것이 정상이라 그때는 알리기만 한다
+    n_rev = RunBatch.objects.filter(for_review=True).count()
+    if Detection.objects.exists():
+        report("검토 대상 묶음이 하나 정해져 있다", 0 if n_rev == 1 else 1, 1,
+               f"검토 대상이 {n_rev}개다 — 0이면 화면이 비고, 둘이면 제약이 막았어야 한다",
+               [] if n_rev == 1 else [f"for_review={n_rev}"])
+    else:
+        print("     (검출이 아직 없다 — 검토 대상 묶음도 없는 것이 정상)")
+    with_det = set(Detection.objects.reviewing().filter(viewpoint__in=qs)
+                   .values_list("viewpoint_id", flat=True))
+    none = [vp for vp in qs if vp.id not in with_det]
+    if none:
+        print(f"     (검출이 없는 시야 {len(none)}개 — 아직 돌리지 않았다면 정상)")
+
+
+# --- 4. 분류 -------------------------------------------------------------------
+def check_classes(slug=None):
+    """`ClassDef` 에 없는 분류가 붙어 있으면 화면에서 이름도 색도 없이 나온다."""
+    known = set(ClassDef.objects.values_list("key", flat=True))
+    qs = Candidate.objects.filter(detection__in=Detection.objects.reviewing()).exclude(cls="")
+    if slug:
+        qs = qs.filter(detection__viewpoint__slide__slug=slug)
+    used = Counter(qs.values_list("cls", flat=True))
+    bad = {k: v for k, v in used.items() if k not in known}
+    report("개체 분류가 ClassDef 에 있다", len(bad), len(used),
+           f"정의되지 않은 분류: {list(bad)}", [f"{k}: {v}개" for k, v in bad.items()])
+    # 판정이 내는 분류(`judge.PASS_CLS`)가 표에 있어야 한다 — 없으면 통과분이
+    # 이름 없는 분류가 된다
+    report("판정 분류(judge.PASS_CLS)가 ClassDef 에 있다",
+           0 if judge.PASS_CLS in known else 1, 1, f"'{judge.PASS_CLS}' 행이 없다")
+    active = list(ClassDef.objects.filter(active=True).values("key", "hotkey", "color"))
+    nokey = [c["key"] for c in active if not (c["hotkey"] or "").strip()]
+    report("활성 분류에 단축키가 있다", len(nokey), len(active), f"단축키 없음: {nokey}")
+    nocolor = [c["key"] for c in active if not (c["color"] or "").strip()]
+    report("활성 분류에 색이 있다", len(nocolor), len(active), f"색 없음: {nocolor}")
+
+
+# --- 6. 문턱이 갈라져 있는가 ----------------------------------------------------
+def check_thresholds(slug=None):
+    """문턱은 **슬라이드 안에서** 하나여야 한다 — 갈라지면 시야 간 개수를 비교할 수 없다."""
+    per = defaultdict(Counter)
+    for d in dets(slug):
+        per[d.viewpoint.slide.slug][d.thresholds_id] += 1
+    mixed = {s: c for s, c in per.items() if len(c) > 1}
+    if not mixed:
+        sets = {tid for c in per.values() for tid in c}
+        print(f"   슬라이드마다 문턱이 하나다 ({len(per)}개 슬라이드 · 문턱 조합 {len(sets)}가지)")
+        return
+    print(f"!! 슬라이드 안에서 문턱이 갈라졌다 — {len(mixed)}개  <-- 시야 간 개수를 비교할 수 없다")
+    for s, c in sorted(mixed.items()):
+        print(f"       {s}: " + " · ".join(f"#{t}:{n}" for t, n in c.most_common()))
+    problems.append(("슬라이드 내 문턱 혼재", len(mixed), "refilter.py --slide 로 맞출 것"))
 
 
 # --- 5. 뼈대 — 경로가 실제 파일을 가리키는가, 배율이 있는가 --------------------
@@ -219,11 +337,19 @@ def main():
     if args.slide and not Slide.objects.filter(slug=args.slide).exists():
         raise SystemExit(f"슬라이드를 찾지 못했다: {args.slide}")
 
-    print("=== 5. 뼈대 (파일·배율·Image 행) ===")
+    print("=== 1. 판정 캐시 ===")
+    check_verdicts(args.slide)
+    print("\n=== 2. 현재 검출 ===")
+    check_current(args.slide)
+    print("\n=== 4. 분류 ===")
+    check_classes(args.slide)
+    print("\n=== 5. 뼈대 (파일·배율·Image 행) ===")
     check_skeleton(args.slide)
+    print("\n=== 6. 문턱 ===")
+    check_thresholds(args.slide)
     print("\n=== 7. 층 (지역·지점·시료·관찰·격자 칸) ===")
     check_layers(args.slide)
-    print("\n(1~4 · 6 · 8~12 는 검출·교정·분류·카탈로그·도감 검사 — 그 단계에서 온다)")
+    print("\n(3 · 8~12 는 교정·묶음·카탈로그·도감 검사 — 그 단계에서 온다)")
 
     print()
     if problems:

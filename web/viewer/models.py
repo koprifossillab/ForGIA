@@ -1,9 +1,10 @@
 """데이터와 설정을 담는 스키마. DiaRUGA v0.29.0 `web/viewer/models.py` 에서
 층 넷(`Site`·`Locality`·`Sample`·`Slide`)만 먼저 가져왔다 (P01 0단계).
 
-1단계에서 `RunBatch`·`Run`·`Viewpoint`·`Frame`·`Stack`·`Image` 가 왔다. 나머지 —
-`Detection`·`Candidate`·`ThresholdSet`·`ClassDef`(2단계), `ViewpointReview`·
-`ObjectReview`·`ForamObject`·`Taxon`(3단계) — 는 그 단계에서 가져온다.
+1단계에서 `RunBatch`·`Run`·`Viewpoint`·`Frame`·`Stack`·`Image` 가, 2단계에서
+`ThresholdSet`·`ClassDef`·`Setting`·`Detection`·`Candidate` 가 왔다. 나머지 —
+`ViewpointReview`·`ObjectReview`·`ForamObject`·`Taxon`(3단계) — 는 그 단계에서
+가져온다.
 
 DiaRUGA 와 다른 자리 (P01 2절·5절):
 
@@ -19,8 +20,12 @@ DiaRUGA 와 다른 자리 (P01 2절·5절):
 
 DiaRUGA 에서 그대로 물려받은 규칙 둘은 그쪽 머리말 그대로다:
 
-**1. 교정은 `Candidate` 가 아니라 `mask_key` 에 붙는다.** (3단계에서 온다)
-**2. 검출은 덮어쓰지 않고 쌓는다.** (2단계에서 온다)
+**1. 교정은 `Candidate` 가 아니라 `mask_key` 에 붙는다.** 검출을 다시 돌리면 후보
+행이 새로 생기므로 FK 로 매면 사람의 판단이 조인 실패로 사라진다. `mask_key`(bbox
+문자열)를 진짜 키로 두고 `candidate` 는 바인딩 결과로 채운다. (교정 표는 3단계)
+
+**2. 검출은 덮어쓰지 않고 쌓는다.** `Detection.is_current` 가 뷰어가 볼 것을
+가리킨다. 교체 전후를 같은 시야로 비교해야 하기 때문이다.
 """
 from django.db import models
 
@@ -608,4 +613,244 @@ class Image(models.Model):
 
     def __str__(self):
         return f"{self.kind}:{self.path}"
+
+
+class ThresholdSet(models.Model):
+    """판정 문턱. DiaRUGA 는 열한 칸(텍스처·타원·신장비)인데 ForGIA 는 **셋**이다 —
+    크기 하한·상한(타원 장축 µm)과 검출기 확신도 하한(P01 2절 ②). 불투명 개체라
+    텍스처·타원 관문은 뜻이 없고, "유공충인가" 는 분류기(4단계)가 답한다.
+
+    테이블로 두면 이름을 붙여 비교할 수 있다 — "conf 0.25 vs 0.4 를 같은 시야에
+    걸고 개수를 나란히". 같은 조합이면 한 행을 공유한다(`threshold_set_for`).
+    칸을 더할 때는 `pipeline/judge.py` 의 `DEFAULTS`·`FIELDS` 와 함께 간다.
+    """
+
+    name = models.CharField(max_length=120, blank=True)
+    min_um = models.FloatField(default=63.0)
+    max_um = models.FloatField(default=2000.0)
+    conf_min = models.FloatField(default=0.25)
+    is_default = models.BooleanField(default=False)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    FIELDS = ("min_um", "max_um", "conf_min")
+
+    def as_dict(self):
+        return {f: getattr(self, f) for f in self.FIELDS}
+
+    def __str__(self):
+        return self.name or f"문턱 #{self.pk}"
+
+
+class ClassDef(models.Model):
+    """분류 정의 — **형태·보존 상태만** (P01 2절 ③). 분류학(종)은 3단계의 `Taxon`
+    으로 간다. DiaRUGA 는 이 표 하나에 형태(원형·봉상)와 속(Eucampia…)을 함께
+    담았는데, 종이 수백인 유공충에서는 단축키 순환·색·CSS 배지가 안 선다.
+
+    **분류를 더할 때 채울 것** — DiaRUGA 038·040 이 겪은 것 그대로다. 하나라도
+    비면 예외는 안 나고 그 분류만 화면에서 조용히 다르게 굴러간다:
+
+        label       전체 이름
+        short       약칭. 자리가 좁은 곳에서 쓴다. 비면 label 을 쓴다
+        badge       배지 CSS 클래스. `base.html` 에 `.badge.<badge>` 규칙이 있어야 한다
+        color       "R,G,B". **`base.html` 의 CSS 도 함께 고쳐야 한다**. 비면 마스크가 투명해진다
+        hotkey      검토 화면 단축키(3단계). 비면 그 분류만 메뉴로만 지정된다
+        counted     개체 수로 세는가 (파편은 False)
+        sort_order  열·메뉴·단축키 순환의 차례
+
+    첫 네 줄은 `migrations/0003` 이 심는다 — `foram`(온전) · `broken`(파손) ·
+    `fragment`(파편) · `other`(비유공충). `is_taxon` 칸은 DiaRUGA 와 같게 두되
+    **여기서는 늘 False 다** — 분류학은 이 표에 안 앉는다.
+
+    `check_db.py` 의 "4. 분류" 가 hotkey·color 가 빈 것을 잡는다.
+    **되돌릴 때는 지우지 말고 `active=False` 로 끈다** — 행을 지우면 그 분류로
+    붙인 교정이 이름 없는 분류가 되어 화면에서 안 읽힌다.
+    """
+
+    key = models.CharField(max_length=32, unique=True)
+    label = models.CharField(max_length=64)
+    short = models.CharField(max_length=16, blank=True)
+    badge = models.CharField(max_length=16, blank=True)
+    color = models.CharField(max_length=24, blank=True)   # "196,181,253"
+    is_taxon = models.BooleanField(default=False)
+    counted = models.BooleanField(default=True)
+    hotkey = models.CharField(max_length=8, blank=True)
+    sort_order = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "key"]
+
+    def __str__(self):
+        return self.label
+
+
+class Setting(models.Model):
+    """그 밖의 설정. 경로처럼 배포마다 다른 값은 여기 두지 않는다(환경변수)."""
+
+    key = models.CharField(max_length=64, unique=True)
+    value = models.JSONField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.key
+
+
+
+class DetectionQuerySet(models.QuerySet):
+
+    def reviewing(self):
+        """**뷰어가 보여줄 검출** (DiaRUGA P10). 검토 대상 묶음의, 그 묶음 안 최신 것.
+
+        `is_current=True` 를 코드 여기저기에 적지 않고 여기 하나로 모은다.
+        예전에는 12개 파일에 흩어져 있었고, **뜻이 바뀌는데 자리가 흩어져 있으면
+        전부 틀린다 — 그런데 예외가 안 난다.**
+
+        **묻는 것이 둘로 갈린다.** 이 메서드를 쓸 자리와 아닌 자리가 있다:
+
+        | 무엇을 묻는가 | 무엇을 쓰는가 |
+        |---|---|
+        | 뷰어가 보여줄 검출 (화면·집계·문턱) | **`reviewing()`** |
+        | 이 묶음 안의 최신 (파이프라인·prune·rebind) | `is_current` 그대로 |
+
+        뒤엣것까지 바꾸면 파이프라인이 **검토 대상이 아닌 묶음에 쌓을 때** 자기
+        검출을 못 찾는다.
+        """
+        return self.filter(is_current=True, run__batch__for_review=True)
+
+
+
+class Detection(models.Model):
+    """이미지 한 장에 대한 검출 실행.
+
+    재실행마다 새 행을 쌓는다 — 덮어쓰면 엔진 교체 전후를 비교할 수 없다.
+
+    **뷰어가 보는 것은 `Detection.objects.reviewing()` 이다** (DiaRUGA P10) —
+    `is_current` 하나가 아니라 **묶음의 `for_review` 와 함께 봐야** 한다.
+    `is_current` 는
+    "그 묶음 **안에서** 최신" 이라는 좁은 뜻이고, 어느 묶음을 볼지는
+    `RunBatch.for_review` 가 정한다.
+    """
+
+    objects = DetectionQuerySet.as_manager()
+
+    viewpoint = models.ForeignKey(Viewpoint, on_delete=models.CASCADE,
+                                 related_name="detections")
+    # **어느 이미지에 대한 검출인가.** 예전에는 `target`(`stack|frame`) +
+    # nullable `frame` 으로 다형 연관을 흉내 냈다 — 합성본이 `Frame` 이 아니라
+    # 테이블이 둘이었기 때문이다. `Image` 가 그것을 없앴다 (DiaRUGA P06).
+    # 무엇에 붙은 검출인가는 `image.kind` 가, 어느 프레임인가는 `image.frame`
+    # 이 말한다.
+    image = models.ForeignKey("Image", on_delete=models.CASCADE,
+                              related_name="detections")
+    image_path = models.CharField(max_length=500)
+    width = models.IntegerField(null=True, blank=True)
+    height = models.IntegerField(null=True, blank=True)
+    scale = models.FloatField(default=1.0)
+    um_per_pixel = models.FloatField(null=True, blank=True)
+    um_per_pixel_native = models.FloatField(null=True, blank=True)
+    um_per_pixel_source = models.CharField(max_length=8, blank=True)
+    um_per_pixel_backfilled = models.BooleanField(default=False)
+    n_raw_masks = models.IntegerField(default=0)
+    n_sized = models.IntegerField(default=0)
+    thresholds = models.ForeignKey(ThresholdSet, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name="detections")
+    run = models.ForeignKey(Run, null=True, blank=True,
+                            on_delete=models.SET_NULL, related_name="detections")
+    is_current = models.BooleanField(default=True)
+    superseded_by = models.ForeignKey("self", null=True, blank=True,
+                                      on_delete=models.SET_NULL,
+                                      related_name="supersedes")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["viewpoint", "is_current"])]
+
+    @property
+    def batch(self):
+        """이 검출이 속한 묶음. **교정의 열쇠에 들어간다** (DiaRUGA P09 5.1).
+
+        `run` 도 `Run.batch` 도 없을 수 있어 `None` 이 나온다 — 묶음에 안 든
+        `detect` 실행이 70개 있고 전부 검출을 하나도 안 남긴 것들이다. 그런
+        검출에 교정이 앉으면 batch 없는 교정이 되므로 `check_db.py` 가 센다.
+
+        조인이 둘 걸린다 — 여럿을 돌 때는 `select_related("run__batch")`.
+        """
+        return self.run.batch if self.run_id else None
+
+    def __str__(self):
+        return f"{self.image_path} ({'현재' if self.is_current else '이전'})"
+
+
+
+class Candidate(models.Model):
+    """개체 하나. 통과분·탈락분을 한 테이블에 담고 `passed` 로 가른다.
+
+    문턱을 바꾸면 개체가 무리를 옮겨 다니므로(지금은 두 배열 사이로 옮기느라
+    파일을 다시 쓴다) `passed` 칼럼 하나면 refilter 가 UPDATE 한 번이다.
+    """
+
+    detection = models.ForeignKey(Detection, on_delete=models.CASCADE,
+                                  related_name="candidates")
+    # bbox 로 만든 키. 교정 기록이 이것으로 붙는다.
+    mask_key = models.CharField(max_length=64)
+    # 검출기가 낸 원시 마스크의 순번. 판정으로 재부여되는 표시용 id 와 다르다 —
+    # 이것이 있어야 out/*.json 을 그대로 재현할 수 있다(내보내기).
+    raw_id = models.IntegerField(null=True, blank=True)
+
+    bbox_x = models.IntegerField()
+    bbox_y = models.IntegerField()
+    bbox_w = models.IntegerField()
+    bbox_h = models.IntegerField()
+    center_x = models.IntegerField(null=True, blank=True)
+    center_y = models.IntegerField(null=True, blank=True)
+    area_px = models.IntegerField(default=0)
+    area_um2 = models.FloatField(null=True, blank=True)
+    major_um = models.FloatField(null=True, blank=True)
+    minor_um = models.FloatField(null=True, blank=True)
+    long_side_um = models.FloatField(null=True, blank=True)
+    short_side_um = models.FloatField(null=True, blank=True)
+    aspect_ratio = models.FloatField(null=True, blank=True)
+    fill_ratio = models.FloatField(null=True, blank=True)
+
+    shape_ok = models.BooleanField(default=False)
+    circularity = models.FloatField(null=True, blank=True)
+    convexity = models.FloatField(null=True, blank=True)
+    solidity = models.FloatField(null=True, blank=True)
+    elongation = models.FloatField(null=True, blank=True)
+    ellipse_iou = models.FloatField(null=True, blank=True)
+
+    # 규조의 areolae 텍스처 자리 — ForGIA 는 안 잰다(불투명 개체). 칸은 DiaRUGA 와
+    # 같게 두어 `NUM` 목록·내보내기 형식이 그대로 돌게 한다. 늘 NULL 이다
+    texture = models.FloatField(null=True, blank=True)
+    # YOLO 의 conf. DiaRUGA 는 SAM2 의 두 값 자리에 conf 를 넣었고 이름을 그대로
+    # 두었다 — `judge.conf_min` 이 `predicted_iou` 를 본다
+    predicted_iou = models.FloatField(null=True, blank=True)
+    stability_score = models.FloatField(null=True, blank=True)
+
+    # [x0,y0,x1,y1,...] 평탄 배열. 용량의 대부분이지만 마스크를 그리는 근거다.
+    # rle 은 지금도 항상 null 이라 옮기지 않는다.
+    polygon = models.JSONField(default=list, blank=True)
+
+    passed = models.BooleanField(default=False)
+    cls = models.CharField(max_length=32, blank=True)
+    reject = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["detection", "mask_key"],
+                                               name="uniq_candidate_key")]
+        indexes = [
+            models.Index(fields=["detection", "passed"]),
+            models.Index(fields=["cls"]),
+            models.Index(fields=["major_um"]),
+            models.Index(fields=["texture"]),
+        ]
+
+    @property
+    def bbox_xywh(self):
+        return [self.bbox_x, self.bbox_y, self.bbox_w, self.bbox_h]
+
+    def __str__(self):
+        return f"{self.mask_key} ({self.cls or '미분류'})"
 

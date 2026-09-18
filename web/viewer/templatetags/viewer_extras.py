@@ -76,3 +76,10 @@ def full(rel):
         return ""
     from viewer import data
     return reverse("image") + "?" + urlencode({"p": str(rel), "v": data.stamp(rel)})
+
+
+@register.filter
+def mask_points(c):
+    """개체 dict 의 폴리곤 → SVG `points`. 규칙은 `data.mask_points` 하나다."""
+    from viewer import data
+    return data.mask_points(c)

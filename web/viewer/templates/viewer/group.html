@@ -8,10 +8,11 @@
   {% if next is not None %}<a class="todo" href="{% url 'group' slug next %}">g{{ next }} →</a>{% endif %}
 {% endblock %}
 {% comment %}
-  **1단계의 시야 화면 — 사진만 본다.** 합성본을 크게, 프레임을 아래 줄에. 검출 마스크·
-  교정·단축키가 든 DiaRUGA 의 검토 화면(`group.html` 1,300줄 + `_detview_js.html`)은
-  3단계에서 이 주소를 그대로 물려받는다. 그때 이 파일은 통째로 바뀐다 — 여기에
-  무엇을 더 쌓지 않는다.
+  **1·2단계의 시야 화면 — 사진과 검출 마스크만 본다.** 합성본을 크게, 프레임을 아래
+  줄에, 대표 검출의 폴리곤을 SVG 로 얹는다(합성본을 볼 때만 — 프레임의 좌표가
+  아니다). 교정·단축키가 든 DiaRUGA 의 검토 화면(`group.html` 1,300줄 +
+  `_detview_js.html`)은 3단계에서 이 주소를 그대로 물려받는다. 그때 이 파일은
+  통째로 바뀐다 — 여기에 무엇을 더 쌓지 않는다.
 {% endcomment %}
 {% block style %}
   .shotview { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
@@ -38,6 +39,11 @@
     <div class="big" id="big">
       {% if stack %}
         <a href="{% full stack.focused_rel %}" target="_blank" rel="noopener"><img id="bigimg" src="{% thumb stack.focused_rel 1600 %}" alt="합성본"></a>
+        {% if detection and detection.image_rel == stack.focused_rel %}
+          <svg class="masks" id="masks" viewBox="0 0 {{ detection.size.0 }} {{ detection.size.1 }}" preserveAspectRatio="none">
+            {% for c in detection.candidates %}<polygon class="{{ c.cls|default:'none' }}" points="{{ c|mask_points }}"><title>{{ c.cls }} · 장축 {{ c.major_um }} µm · 확신도 {{ c.conf|floatformat:2 }}</title></polygon>{% endfor %}
+          </svg>
+        {% endif %}
       {% elif frames %}
         <a href="{% full frames.0.rel %}" target="_blank" rel="noopener"><img id="bigimg" src="{% thumb frames.0.rel 1600 %}" alt="{{ frames.0.name }}"></a>
       {% else %}
@@ -71,7 +77,10 @@
       {% else %}
       <span>합성</span><code class="mono dim">아직 없음</code>
       {% endif %}
+      <span>검출</span><code class="mono">{% if detection %}{{ detection.n_candidates }}개 <span class="dim">(원시 {{ detection.n_raw_masks }} · 크기통과 {{ detection.n_sized }} · 탈락 {{ detection.rejected|length }})</span>{% elif elsewhere %}<span class="dim">이 묶음에 없음 — {{ elsewhere|join:" · " }} 에는 있다</span>{% else %}<span class="dim">아직 없음</span>{% endif %}</code>
     </div>
+    <div style="margin-top:10px">{% include "viewer/_batchtag.html" with review_batch=review_batch only %}</div>
+    {% if detection %}<label class="dim" style="display:block;margin-top:8px;font-size:12px"><input type="checkbox" id="maskck" checked> 마스크 보이기</label>{% endif %}
     <p class="dim" style="margin-top:12px">검출·동정·교정은 2·3단계에서 이 화면에 붙는다.</p>
   </aside>
 </div>
@@ -79,12 +88,16 @@
 (function () {
   var big = document.getElementById('bigimg'), shots = document.getElementById('shots');
   if (!big || !shots) return;
+  var masks = document.getElementById('masks'), ck = document.getElementById('maskck');
   shots.addEventListener('click', function (e) {
     var b = e.target.closest('.shot'); if (!b) return;
     big.src = b.dataset.view; big.alt = b.dataset.title;
     big.parentElement.href = b.dataset.full;
     shots.querySelectorAll('.shot').forEach(function (x) { x.classList.toggle('on', x === b); });
+    // 마스크는 합성본의 좌표다 — 프레임을 볼 때는 감춘다 (다른 판에 얹으면 어긋난다)
+    if (masks) masks.style.display = (b.dataset.title === '합성본' && (!ck || ck.checked)) ? '' : 'none';
   });
+  if (ck && masks) ck.addEventListener('change', function () { masks.style.display = ck.checked ? '' : 'none'; });
 })();
 </script>
 {% endblock %}

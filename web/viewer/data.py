@@ -6,21 +6,378 @@ DiaRUGA v0.29.0 `web/viewer/data.py`(5,632줄)에서 1단계 화면이 쓰는 �
 (`locality_detail`) · 파이프라인 상태(`pipeline_status`) · 이미지 경로
 (`safe_image_path`·`stamp`).
 
-**검출·교정에 걸린 값은 아직 0 이다.** `_slide_summary` 가 DiaRUGA 에서는
-`_summary_by_sql`(원시 SQL · DiaRUGA 058)로 개체를 세는데, 그 테이블이 2·3단계에
-온다. 그때 그 함수를 가져와 이 자리의 `0` 을 갈아 끼운다 — 열쇠 이름은 그쪽과
-같게 두었다(`n_detected`·`n_counted`·`reviewed_groups` …) 화면이 안 바뀌게.
+2단계에서 검출 층이 왔다 — 분류표(`class_list`·`counted_classes`) · 검토 대상
+묶음(`review_batch_id`) · 집계(`_summary_by_sql`, 원시 SQL · DiaRUGA 058) · 표지
+마스크(`_kept_masks`) · 개체 목록(`candidate_rows`) · 크롭 기하. **교정에 걸린
+값(`reviewed_groups` · 지운 것·되살린 것)은 3단계까지 0 이다** — 그때 SQL 의
+`LEFT JOIN viewer_objectreview` 갈래가 붙는다.
 """
 import json
+import math
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count
+from django.db import connection
+from django.db.models import Case, Count, Prefetch, When
 from django.utils import timezone
 
 from . import antarctica
-from .models import Frame, Run, Site, Slide, Stack, Viewpoint
+from .models import (Candidate, ClassDef, Detection, Frame, Run, RunBatch,
+                     Site, Slide, Stack, Viewpoint)
+
+
+# --- 분류표 --------------------------------------------------------------------
+# `ClassDef` 테이블이 정한다 (DiaRUGA 037~040). 요청마다 읽는다 — 프로세스가 여럿이라
+# 캐시하면 판이 갈린다. 행이 넷뿐이라 비용도 없다.
+
+def class_list() -> list[dict]:
+    return list(ClassDef.objects.filter(active=True)
+                .values("key", "label", "short", "badge", "color", "hotkey",
+                        "counted", "is_taxon", "sort_order"))
+
+
+def _labels() -> dict:
+    return {c["key"]: c["label"] for c in class_list()}
+
+
+def counted_classes() -> list[dict]:
+    """개체 수로 세는 분류만 — 파편·비유공충은 개체가 아니다 (`ClassDef.counted`).
+    목록의 "검출" 칸은 이것만 더한 값이다."""
+    return [{"key": c["key"], "label": c["label"], "short": c["short"] or c["label"]}
+            for c in class_list() if c["counted"]]
+
+
+# --- 검토 대상 묶음 ---------------------------------------------------------------
+
+def review_batch_id():
+    """검토 대상 묶음의 pk. 없으면 `None` (DiaRUGA P10). 서버 설정이라 요청마다 한 번."""
+    return (RunBatch.objects.filter(for_review=True)
+            .values_list("id", flat=True).first())
+
+
+def review_batch_label() -> str:
+    return (RunBatch.objects.filter(for_review=True)
+            .values_list("label", flat=True).first() or "")
+
+
+def batches_to_run() -> list[dict]:
+    """새 자료가 들어왔을 때 **어떤 순서로 어느 묶음을 채우는가** (DiaRUGA 079).
+
+    검토 중인 묶음이 먼저, 나머지는 최근 것부터. **조리법이 없으면 안 돈다.**
+    가중치 파일이 없으면 목록에 남기되 `ready=False` 와 이유를 함께 준다.
+    """
+    root = Path(settings.DATA_ROOT)
+    rows = []
+    for b in RunBatch.objects.filter(kind="detect").exclude(recipe={}):
+        r = dict(b.recipe)
+        ready, why = True, ""
+        w = r.get("weights")
+        if r.get("backend", "yolo") == "yolo":
+            if not w:
+                ready, why = False, "조리법에 가중치가 없다"
+            else:
+                path = Path(w) if Path(w).is_absolute() else root / w
+                if not path.exists():
+                    ready, why = False, f"가중치 파일이 없다: {path}"
+        rows.append({"batch": b, "recipe": r, "ready": ready, "why": why})
+    rows.sort(key=lambda x: (not x["batch"].for_review,
+                             -x["batch"].started_at.timestamp()))
+    return rows
+
+
+def batches_elsewhere(slide=None, vp=None) -> dict:
+    """시야 pk → **검토 대상이 아닌 묶음 중 검출이 있는 것**들의 이름 (DiaRUGA P10).
+    검출이 아예 없는 것과 다른 묶음에는 있는 것은 다른 말이다."""
+    rb = review_batch_id()
+    qs = Detection.objects.filter(is_current=True)
+    if slide is not None:
+        qs = qs.filter(viewpoint__slide=slide)
+    if vp is not None:
+        qs = qs.filter(viewpoint=vp)
+    if rb is not None:
+        qs = qs.exclude(run__batch_id=rb)
+    out = defaultdict(list)
+    for vp_id, label in (qs.values_list("viewpoint_id", "run__batch__label")
+                         .distinct()):
+        if label and label not in out[vp_id]:
+            out[vp_id].append(label)
+    return out
+
+
+# --- 검출 → dict -----------------------------------------------------------------
+# **교정을 얹는 자리는 3단계에서 온다** (`_apply_review`). 지금은 판정 그대로다.
+
+NUM_FIELDS = ("area_um2", "major_um", "minor_um", "long_side_um", "short_side_um",
+              "aspect_ratio", "fill_ratio", "circularity", "convexity", "solidity",
+              "elongation", "ellipse_iou", "texture", "predicted_iou",
+              "stability_score")
+
+
+def mask_points(c: dict) -> str:
+    """SVG `points` 문자열. 점이 셋 미만이면 빈 문자열 — 그릴 수 없다."""
+    p = c.get("polygon") or []
+    if len(p) < 6:
+        return ""
+    return " ".join(f"{p[i]},{p[i + 1]}" for i in range(0, len(p) - 1, 2))
+
+
+def _cand_dict(c: Candidate) -> dict:
+    return {
+        "id": c.raw_id, "key": c.mask_key, "bbox_xywh": c.bbox_xywh,
+        "center_xy": [c.center_x, c.center_y], "area_px": c.area_px,
+        "shape_ok": c.shape_ok, "polygon": c.polygon or [],
+        "cls": c.cls or None, "passed": c.passed, "reject": c.reject or "",
+        # 확신도는 YOLO conf (DiaRUGA 는 SAM2 자리 이름을 그대로 뒀다)
+        "conf": c.predicted_iou,
+        **{f: getattr(c, f) for f in NUM_FIELDS},
+    }
+
+
+def current_detections(vp: Viewpoint, batch_id=None) -> list[Detection]:
+    """이 시야의 현재 검출 — **검토 대상 묶음 안에서** 이미지마다 하나. 합성본이 먼저."""
+    if batch_id is None:
+        batch_id = review_batch_id()
+    if batch_id is None:
+        return []
+    return list(Detection.objects.filter(viewpoint=vp, is_current=True,
+                                         run__batch_id=batch_id)
+                .select_related("image")
+                .prefetch_related("candidates")
+                .order_by(Case(When(image__kind="stack", then=0), default=1), "id"))
+
+
+def detection_dict(d: Detection) -> dict:
+    cands = [_cand_dict(c) for c in d.candidates.all()]
+    kept = [c for c in cands if c["passed"]]
+    kept.sort(key=lambda c: -(c["area_px"] or 0))
+    return {
+        "detection_id": d.pk, "image_id": d.image_id,
+        "image_rel": d.image.path if d.image_id else d.image_path,
+        "image_kind": d.image.kind if d.image_id else "",
+        "size": [d.width, d.height], "um_per_pixel": d.um_per_pixel,
+        "batch_id": d.run.batch_id if d.run_id else None,
+        "thresholds": d.thresholds.as_dict() if d.thresholds_id else None,
+        "n_raw_masks": d.n_raw_masks, "n_sized": d.n_sized,
+        "candidates": kept, "rejected": [c for c in cands if not c["passed"]],
+        "n_candidates": len(kept),
+    }
+
+
+def detection_for_viewpoint(vp: Viewpoint, batch_id=None) -> dict | None:
+    """시야의 대표 검출(합성본이 있으면 합성본) dict. 없으면 None."""
+    dets = current_detections(vp, batch_id)
+    return detection_dict(dets[0]) if dets else None
+
+
+def candidate_rows(slug: str, batch_id=None, gone: bool = False) -> list[dict]:
+    """슬라이드 전체의 검출 개체를 한 목록으로 — 크롭 화면·계측 표가 쓴다.
+
+    대표 이미지(합성본) 하나의 개체만 낸다 (밀도의 정의: 시야 하나에 판 하나).
+    `gone=True` 면 탈락분을 낸다 — 문턱이 무엇을 떨어뜨렸는지 보는 자리.
+    """
+    slide = Slide.objects.filter(slug=slug).first()
+    if slide is None:
+        return []
+    if batch_id is None:
+        batch_id = review_batch_id()
+    if batch_id is None:
+        return []
+    rows = []
+    for vp in (Viewpoint.objects.filter(slide=slide)
+               .prefetch_related(Prefetch(
+                   "detections",
+                   queryset=Detection.objects.filter(is_current=True, run__batch_id=batch_id)
+                   .select_related("image", "run").prefetch_related("candidates")))):
+        dets = sorted(vp.detections.all(),
+                      key=lambda d: (0 if d.image_id and d.image.kind == "stack" else 1, d.pk))
+        if not dets:
+            continue
+        d = detection_dict(dets[0])
+        for c in d["rejected" if gone else "candidates"]:
+            rows.append({"group_id": vp.idx, "cell": vp.cell,
+                         "stem": Path(d["image_rel"]).stem,
+                         "image_rel": d["image_rel"], "image_id": d["image_id"],
+                         "batch_id": d["batch_id"], "um_per_pixel": d["um_per_pixel"],
+                         "reviewed": False, **c})
+    return rows
+
+
+# --- 집계 (원시 SQL · DiaRUGA 058) ------------------------------------------------
+# **왜 원시 SQL 인가.** 목록은 개수 열 몇 개만 쓰는데 ORM 으로 개체를 올리면 폴리곤
+# (용량의 대부분)까지 파싱한다. 3단계에서 교정(`viewer_objectreview`)을 `LEFT JOIN`
+# 으로 얹는 자리이기도 하다 — ORM 은 `(image_id, mask_key)` 짝으로 못 조인한다.
+#
+# **시야마다 대표 이미지 하나만 센다** (`rep`). 프레임 검출이 함께 쌓이면 같은
+# 개체가 판 수만큼 세어진다 — 학습 자료로는 맞고 계측 통계로는 틀리다.
+
+_REP_CTE = """
+WITH rep AS (
+    SELECT d.id AS det_id, d.viewpoint_id, d.image_id, run.batch_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY d.viewpoint_id
+               ORDER BY CASE i.kind WHEN 'stack' THEN 0 ELSE 1 END, d.id) AS rn
+      FROM viewer_detection d
+      JOIN viewer_image i ON i.id = d.image_id
+      LEFT JOIN viewer_run run ON run.id = d.run_id
+      LEFT JOIN viewer_runbatch rb ON rb.id = run.batch_id
+     WHERE d.is_current AND rb.for_review
+)
+"""
+
+_SUMMARY_SQL = _REP_CTE + """
+SELECT v.slide_id AS slide_id, c.cls AS eff_cls,
+       COUNT(*) FILTER (WHERE c.passed) AS n_kept,
+       COUNT(*) FILTER (WHERE c.passed) AS n_auto,
+       0 AS n_labeled
+FROM viewer_candidate c
+JOIN rep ON rep.det_id = c.detection_id AND rep.rn = 1
+JOIN viewer_viewpoint v ON v.id = rep.viewpoint_id
+WHERE {where}
+GROUP BY v.slide_id, c.cls
+"""
+
+_COVER_SQL = _REP_CTE + """
+SELECT rep.viewpoint_id, c.polygon, COALESCE(NULLIF(c.cls, ''), 'none') AS mask_cls
+FROM viewer_candidate c
+JOIN rep ON rep.det_id = c.detection_id AND rep.rn = 1
+JOIN viewer_viewpoint v ON v.id = rep.viewpoint_id
+WHERE v.slide_id = %s AND c.passed
+ORDER BY rep.viewpoint_id, c.area_px DESC
+"""
+
+
+def _kept_masks(slide: Slide) -> tuple[dict[int, list[dict]], dict[int, int]]:
+    """시야 pk → (표지에 그릴 마스크, 남는 개체 수). 질의 하나.
+    **개수는 마스크 수가 아니다** — 점 셋 미만인 폴리곤도 세어진다."""
+    masks, n_kept = {}, {}
+    with connection.cursor() as cur:
+        cur.execute(_COVER_SQL, [slide.id])
+        for vp_id, poly, cls in cur.fetchall():
+            n_kept[vp_id] = n_kept.get(vp_id, 0) + 1
+            p = json.loads(poly) if isinstance(poly, str) else (poly or [])
+            if len(p) < 6:
+                continue
+            masks.setdefault(vp_id, []).append(
+                {"points": " ".join(f"{p[i]},{p[i + 1]}" for i in range(0, len(p) - 1, 2)),
+                 "cls": cls})
+    return masks, n_kept
+
+
+def _summary_rows(where: str, params: list) -> dict[int, dict]:
+    out = {}
+    with connection.cursor() as cur:
+        cur.execute(_SUMMARY_SQL.format(where=where), list(params))
+        for slide_id, eff_cls, n_kept, n_auto, n_labeled in cur.fetchall():
+            r = out.setdefault(slide_id, {"per_cls": {}, "n_detected": 0,
+                                          "n_auto": 0, "n_labeled": 0})
+            if n_kept and eff_cls:
+                r["per_cls"][eff_cls] = r["per_cls"].get(eff_cls, 0) + n_kept
+            r["n_detected"] += n_kept
+            r["n_auto"] += n_auto
+            r["n_labeled"] += n_labeled
+    return out
+
+
+def _summary_by_sql(slide: Slide) -> dict:
+    per_cls = {c["key"]: 0 for c in class_list()}
+    row = _summary_rows("v.slide_id = %s", [slide.id]).get(slide.id) or {
+        "per_cls": {}, "n_detected": 0, "n_auto": 0, "n_labeled": 0}
+    per_cls.update({k: v for k, v in row["per_cls"].items() if k in per_cls})
+    detected_groups = (Detection.objects.filter(viewpoint__slide=slide).reviewing()
+                       .values("viewpoint_id").distinct().count())
+    return {"per_cls": per_cls, "n_detected": row["n_detected"],
+            "n_auto": row["n_auto"], "n_labeled": row["n_labeled"],
+            "detected_groups": detected_groups}
+
+
+# --- 크롭 기하 (DiaRUGA 그대로) --------------------------------------------------
+
+def polygon_axis(poly) -> tuple[float, float] | None:
+    """마스크의 주축 각도(도)와 축 비율 — 채워진 영역의 2차 모멘트로."""
+    if not poly or len(poly) < 6:
+        return None
+    xs = [float(v) for v in poly[0::2]]
+    ys = [float(v) for v in poly[1::2]]
+    n = len(xs)
+    a2 = sxx = syy = sxy = 0.0
+    cx = cy = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        x0, y0, x1, y1 = xs[i], ys[i], xs[j], ys[j]
+        cross = x0 * y1 - x1 * y0
+        a2 += cross
+        cx += (x0 + x1) * cross
+        cy += (y0 + y1) * cross
+        sxx += cross * (x0 * x0 + x0 * x1 + x1 * x1)
+        syy += cross * (y0 * y0 + y0 * y1 + y1 * y1)
+        sxy += cross * (2 * x0 * y0 + x0 * y1 + x1 * y0 + 2 * x1 * y1)
+    area = a2 / 2.0
+    if abs(area) < 1e-9:
+        return None
+    cx /= 6.0 * area
+    cy /= 6.0 * area
+    m20 = sxx / (12.0 * area) - cx * cx
+    m02 = syy / (12.0 * area) - cy * cy
+    m11 = sxy / (24.0 * area) - cx * cy
+    ang = 0.5 * math.atan2(2.0 * m11, m20 - m02)
+    diff = math.hypot(m20 - m02, 2.0 * m11)
+    l1 = (m20 + m02 + diff) / 2.0
+    l2 = (m20 + m02 - diff) / 2.0
+    ratio = math.sqrt(l1 / l2) if l2 > 1e-9 else 999.0
+    return math.degrees(ang), ratio
+
+
+def rotated_extent(poly, deg: float) -> tuple[int, int]:
+    r = math.radians(deg)
+    cos, sin = math.cos(r), math.sin(r)
+    xs = [float(v) for v in poly[0::2]]
+    ys = [float(v) for v in poly[1::2]]
+    rx = [x * cos - y * sin for x, y in zip(xs, ys)]
+    ry = [x * sin + y * cos for x, y in zip(xs, ys)]
+    return (max(1, int(round(max(rx) - min(rx)))),
+            max(1, int(round(max(ry) - min(ry)))))
+
+
+UPRIGHT_MIN_RATIO = 1.15
+
+
+def crop_geometry(c: dict, rotate: bool = True) -> dict | None:
+    """갤러리 크롭의 회전량과 결과 크기(px). 주축을 세로로 세운다."""
+    poly = c.get("polygon")
+    if not poly or len(poly) < 6:
+        return None
+    deg = 0.0
+    if rotate:
+        axis = polygon_axis(poly)
+        if axis and axis[1] >= UPRIGHT_MIN_RATIO:
+            deg = 90.0 - axis[0]
+            while deg > 90:
+                deg -= 180
+            while deg < -90:
+                deg += 180
+    w, h = rotated_extent(poly, deg)
+    m = max(3, round(0.08 * max(w, h)))
+    ow, oh = w + 2 * m, h + 2 * m
+    return {"rot": round(deg, 2), "out": f"{ow},{oh}", "out_w": ow, "out_h": oh}
+
+
+def scalebar_for(out_w: int, um_per_px: float, frac: float = 0.4) -> dict | None:
+    """크롭 썸네일에 얹을 스케일바. 이미지 폭에 대한 백분율로 준다."""
+    if not out_w or not um_per_px:
+        return None
+    um_w = out_w * um_per_px
+    target = um_w * frac
+    if target <= 0:
+        return None
+    e = 10.0 ** math.floor(math.log10(target))
+    m = target / e
+    bar = (5 if m >= 5 else 2 if m >= 2 else 1) * e
+    if bar <= 0:
+        return None
+    label = f"{bar:g} µm" if bar >= 1 else f"{bar:.1f} µm"
+    return {"pct": round(100.0 * bar / um_w, 2), "um": bar, "label": label}
 
 
 def stamp(rel: str) -> int:
@@ -62,13 +419,20 @@ def slide_label(slug: str) -> str | None:
 def scales_by_slide() -> dict:
     """슬라이드마다의 µm/px. 배율을 바꿔 찍으면 슬라이드마다 다르다.
 
-    DiaRUGA 는 검출 행(`Detection.um_per_pixel`)에서 셌다 — 그 테이블이 2단계에
-    온다. 그때까지는 **프레임**에서 센다(`Frame.um_per_pixel`, `scale.py` 가
-    적은 값). 한 슬라이드 안에 값이 갈리면 가장 많은 쪽을 쓴다 — 갈린 것
-    자체는 `check_db` 가 따로 잡는다.
+    **검출 행에서 세고, 검출이 없는 슬라이드는 프레임에서 센다** — 검출 전에도
+    목록에 배율이 보여야 한다. 한 슬라이드 안에 값이 갈리면 가장 많은 쪽을 쓴다
+    — 갈린 것 자체는 `check_db` 가 따로 잡는다.
     """
     per: dict[str, dict[float, int]] = {}
+    seen = set()
+    for slug, um in (Detection.objects.reviewing().filter(um_per_pixel__isnull=False)
+                     .values_list("viewpoint__slide__slug", "um_per_pixel")):
+        per.setdefault(slug, {})
+        k = round(um, 9)
+        per[slug][k] = per[slug].get(k, 0) + 1
+        seen.add(slug)
     for slug, um in (Frame.objects.filter(um_per_pixel__isnull=False)
+                     .exclude(slide__slug__in=seen)
                      .values_list("slide__slug", "um_per_pixel")):
         per.setdefault(slug, {})
         k = round(um, 9)
@@ -78,11 +442,22 @@ def scales_by_slide() -> dict:
 
 # --- 집계 --------------------------------------------------------------------
 def _slide_summary(slide: Slide) -> dict:
-    """목록 화면의 집계. **검출·교정 값은 2·3단계까지 0 이다** (머리말)."""
+    """목록 화면의 집계. 세는 일은 `_summary_by_sql` 하나로 모았다 (DiaRUGA 060).
+    **교정 값(`reviewed_groups`)은 3단계까지 0 이다.**"""
     vps = Viewpoint.objects.filter(slide=slide)
     n_groups = vps.count()
     sizes = list(vps.values_list("n_frames", flat=True))
     n_img = sum(sizes)
+
+    r = _summary_by_sql(slide)
+    per_cls = r["per_cls"]
+    n_detected, n_auto, n_counts = r["n_detected"], r["n_auto"], r["detected_groups"]
+    labels = _labels()
+    class_counts = [{"key": k, "label": labels.get(k, k), "n": v}
+                    for k, v in per_cls.items() if v]
+    # 세는 분류만 더한 값. 0 인 분류도 자리를 남긴다 — 표의 열이 줄마다 같아야 한다
+    counted = [{**c, "n": per_cls.get(c["key"], 0)} for c in counted_classes()]
+    n_counted = sum(c["n"] for c in counted)
     return {
         "n_groups": n_groups,
         "n_images": n_img,
@@ -90,16 +465,15 @@ def _slide_summary(slide: Slide) -> dict:
         "singletons": sum(1 for s in sizes if s == 1),
         "max_size": max(sizes) if sizes else 0,
         "n_stacks": Stack.objects.filter(viewpoint__slide=slide).count(),
-        # ↓ 2단계(검출)·3단계(교정)에서 `_summary_by_sql` 이 채운다
-        "detected_groups": 0,
-        "n_auto": 0,
-        "n_detected": 0,
-        "mean_detected": None,
-        "n_counted": 0,
-        "mean_counted": None,
-        "counted": [],
-        "class_counts": [],
-        "reviewed_groups": 0,
+        "detected_groups": n_counts,
+        "n_auto": n_auto,
+        "n_detected": n_detected,
+        "mean_detected": round(n_detected / n_counts, 1) if n_counts else None,
+        "n_counted": n_counted,
+        "mean_counted": round(n_counted / n_counts, 1) if n_counts else None,
+        "counted": counted,
+        "class_counts": class_counts,
+        "reviewed_groups": 0,           # 3단계
     }
 
 
@@ -204,7 +578,12 @@ def datasets_total(rows: list[dict]) -> dict:
     keys = ("n_images", "n_groups", "n_stacks", "n_detected", "n_counted",
             "reviewed_groups")
     total = {k: sum(r.get(k) or 0 for r in counted_rows) for k in keys}
-    total["counted"] = []
+    per = {c["key"]: 0 for c in counted_classes()}
+    for r in counted_rows:
+        for c in r.get("counted") or []:
+            if c["key"] in per:
+                per[c["key"]] += c["n"]
+    total["counted"] = [{**c, "n": per[c["key"]]} for c in counted_classes()]
     total["n_excluded"] = len(rows) - len(counted_rows)
     total["n_hidden_in"] = sum(1 for r in counted_rows if r.get("hidden"))
     return total
@@ -363,17 +742,38 @@ def _cover_of(vp: Viewpoint) -> str | None:
 
 
 def dataset_detail(slug: str) -> dict | None:
-    """시야 목록. 검출 마스크·완료 표시는 2·3단계에서 붙는다."""
+    """시야 목록. 완료 표시는 3단계에서 붙는다.
+
+    **개체를 dict 로 만들지 않는다** (DiaRUGA 060). 표지에 얹을 마스크와 수만
+    SQL 로 받는다(`_kept_masks`). 검출을 돌린 이미지와 표지가 같을 때만 마스크를
+    얹는다 — 다른 이미지의 좌표를 얹으면 조용히 어긋난 그림이 된다.
+    """
     slide = Slide.objects.filter(slug=slug).select_related(
         "sample__locality__site").first()
     if slide is None:
         return None
+
+    cover_masks, n_kept = _kept_masks(slide)
+    dets = {}
+    for d in (Detection.objects.filter(viewpoint__slide=slide).reviewing()
+              .select_related("image")
+              .order_by("viewpoint_id",
+                        Case(When(image__kind="stack", then=0), default=1), "id")
+              .values("viewpoint_id", "image_path", "width", "height")):
+        dets.setdefault(d["viewpoint_id"], d)
+    elsewhere = batches_elsewhere(slide=slide)
 
     groups = []
     for vp in (Viewpoint.objects.filter(slide=slide)
                .select_related("sharpest_frame", "stack")
                .prefetch_related("frames")):
         st = getattr(vp, "stack", None)
+        det = dets.get(vp.id)
+        cover_rel = _cover_of(vp)
+        masks, size = [], None
+        if det and cover_rel and Path(det["image_path"]).stem == Path(cover_rel).stem:
+            size = [det["width"], det["height"]]
+            masks = cover_masks.get(vp.id, [])
         groups.append({
             "id": vp.idx,
             "cell": vp.cell,
@@ -381,13 +781,20 @@ def dataset_detail(slug: str) -> dict | None:
             "tag": vp.tag,
             "span_sec": round(vp.span_sec or 0, 1),
             "sharpest": vp.sharpest_frame.name if vp.sharpest_frame else None,
-            "cover_rel": _cover_of(vp),
+            "cover_rel": cover_rel,
+            "cover_size": size,
+            "masks": masks,
             "has_stack": st is not None,
-            "n_detected": None,     # 2단계
+            "missing": det is None,
+            "elsewhere": elsewhere.get(vp.id, []),
+            "n_detected": n_kept.get(vp.id, 0) if det else None,
             "reviewed": False,      # 3단계
         })
 
     return {
+        "missing_groups": sum(1 for g in groups if g["missing"]),
+        "missing_elsewhere": sum(1 for g in groups if g["missing"] and g["elsewhere"]),
+        "review_batch": review_batch_label(),
         "slug": slug,
         "label": slide.name,
         "corr_thresh": slide.corr_thresh,
@@ -458,6 +865,10 @@ def group_photos(slug: str, gid: int) -> dict | None:
             "ref": st.ref_frame.name if st.ref_frame else None,
         } if st else None),
         "frames": _frames(vp),
+        # 검출 — 대표 이미지(합성본)의 것. 화면이 폴리곤을 SVG 로 얹는다.
+        "detection": detection_for_viewpoint(vp),
+        "review_batch": review_batch_label(),
+        "elsewhere": batches_elsewhere(vp=vp).get(vp.id, []),
     }
 
 
@@ -551,7 +962,8 @@ def pipeline_status() -> dict:
             "n_frames": Frame.objects.filter(slide=sl).count(),
             "n_vps": vps,
             "n_stacks": Stack.objects.filter(viewpoint__slide=sl).count(),
-            "n_det_vps": 0,             # 2단계
+            "n_det_vps": (Detection.objects.filter(viewpoint__slide=sl, is_current=True)
+                          .values("viewpoint_id").distinct().count()),
             "discovered_at": sl.discovered_at, "copied_at": sl.copied_at,
         })
 
