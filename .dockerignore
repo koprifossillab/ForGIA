@@ -1,0 +1,44 @@
+# 빌드 컨텍스트에서 뺄 것 (DiaRUGA P03).
+#
+# docker 는 .gitignore 를 보지 않는다. 이 파일이 없으면 사진·백업까지
+# 컨텍스트로 올라가 빌드가 몇 분씩 걸린다.
+#
+# 데이터는 이미지에 굽지 않는다 — 전부 /data 로 마운트해서 본다.
+
+.git/
+.gitignore
+__pycache__/
+*.pyc
+
+# 데이터와 산출물 — 컨테이너는 /data 마운트로 본다
+photos/
+out/
+out_hi/
+stacked/
+review/
+*.npy
+
+# DB 와 백업 — 마운트해서 쓴다. 이미지에 구우면 사본이 갈라진다
+ForGIA.db
+ForGIA.db-wal
+ForGIA.db-shm
+backup/
+
+# 썸네일 캐시 — 컨테이너가 다시 만든다
+web/.thumbcache/
+
+# 호스트 venv
+.venv/
+
+# 장비별 설정. 컨테이너는 compose 가 환경변수를 직접 준다 — 이미지에 구우면
+# 호스트의 데이터 경로와 (앞으로는) 비밀키까지 이미지에 박힌다
+.env
+
+# 문서·보고서. 이미지에 넣을 이유가 없다
+docs/
+devlog/
+*.docx
+
+
+# 컨테이너 안에서는 ../devdocs 가 없어 끊어진 링크가 된다
+.guides

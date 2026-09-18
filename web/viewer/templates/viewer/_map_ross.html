@@ -1,0 +1,117 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_map_ross.html` 에서 왔다.
+{% endcomment %}
+{% comment %}
+  로스해 확대 지도 — 전체 지도와 같은 EPSG:3031 인데 180° 돌려 북쪽이 위다
+  (`ross.py` 머리말). 해안선·빙붕은 Natural Earth 1:10m.
+
+  **마커는 지점(코어)이다.** 전체 지도가 지역으로 묶어 찍는 것을 여기서 가른다.
+  이름표 자리는 서버가 골랐다(`ross.place_labels`) — RS21 의 코어 셋이 50 km
+  안에 있어 전부 위에 얹으면 글자가 글자를 덮는다.
+
+  마커·글자는 전체 지도(viewBox 폭 7600) 기준으로 그려져 있어 `scale()` 로
+  줄인다 — 한국 지도가 키우는 것과 같은 자리다.
+{% endcomment %}
+<svg class="antmap rossmap" viewBox="{{ ross.viewbox }}" role="img"
+     aria-label="로스해 확대 지도 위의 시추 지점">
+  <defs>
+    <clipPath id="rossclip">
+      <rect x="{{ ross.vb.0 }}" y="{{ ross.vb.1 }}" width="{{ ross.vb.2 }}" height="{{ ross.vb.3 }}"/>
+    </clipPath>
+    {# 빙붕의 빗금 — 지도의 관례다. 바다도 육지도 아닌 떠 있는 얼음 #}
+    <pattern id="rosshatch" width="14" height="14" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="14"/>
+    </pattern>
+  </defs>
+  <rect class="ocean" x="{{ ross.vb.0 }}" y="{{ ross.vb.1 }}" width="{{ ross.vb.2 }}" height="{{ ross.vb.3 }}"/>
+
+  <g clip-path="url(#rossclip)">
+    {# 수심대. 얕은 것부터 겹쳐 색이 단계로 깊어진다. 바탕 사각형이 0~200 m 다 #}
+    <g class="bathy">
+      {% for depth, d in ross.bathy %}<path class="b{{ depth }}" d="{{ d }}"/>{% endfor %}
+    </g>
+    {# 면은 획 없이, 선은 따로 — 자료의 180° 이음매가 빙붕 한가운데 그어지지 않게 #}
+    <path class="land" d="{{ ross.land }}"/>
+    <path class="shelf" d="{{ ross.shelf }}"/>
+    <path class="shelfhatch" d="{{ ross.shelf }}"/>
+    <path class="landline" d="{{ ross.land_line }}"/>
+    <path class="shelfline" d="{{ ross.shelf_line }}"/>
+
+    {# 격자. 위도 원은 남극점(틀 밖 아래)이 중심이라 호로 보인다 #}
+    <g class="grat">
+      {% for label, r in ross.lat_circles %}<circle cx="0" cy="0" r="{{ r }}"/>{% endfor %}
+      {% for label, x, y, lx, ly in ross.lon_spokes %}<line x1="0" y1="0" x2="{{ x }}" y2="{{ y }}"/>{% endfor %}
+    </g>
+  </g>
+
+  <g class="glabel">
+    {# 원이 180° 자오선(x = 0)을 지나는 자리는 y = −r 다 (위쪽) #}
+    {% for label, r in ross.lat_circles %}
+      <text x="12" y="-{{ r }}" dy="26">{{ label }}</text>
+    {% endfor %}
+    {% for label, x, y, lx, ly in ross.lon_spokes %}
+      <text x="{{ lx }}" y="{{ ly }}" dy="{% if ly == ross.vb.1 %}28{% else %}-8{% endif %}"
+            text-anchor="{% if lx == ross.vb.0 %}start{% elif ly == ross.vb.1 %}middle{% else %}end{% endif %}"
+            dx="{% if lx == ross.vb.0 %}8{% elif ly == ross.vb.1 %}0{% else %}-8{% endif %}">{{ label }}</text>
+    {% endfor %}
+  </g>
+
+  {# 바다·땅 이름. 마커보다 아래에 깔아 겹쳐도 마커가 읽히게 한다 #}
+  <g class="sealabel">
+    {% for name, x, y in ross.sea_labels %}<text x="{{ x }}" y="{{ y }}">{{ name }}</text>{% endfor %}
+  </g>
+
+  {# 기준점 — 기지 둘과 로스섬. 시료가 어디쯤인지 잴 눈금이다.
+     우리 기지(장보고)는 별과 강조색으로 따로 — 사람이 제일 먼저 찾는 자리다 #}
+  <g class="landmark">
+    {% for name, x, y, anchor, kind in ross.landmarks %}
+      <g class="lm-{{ kind }}" transform="translate({{ x }},{{ y }})">
+        {% if kind == "ours" %}
+          <path class="star" d="M0,-16L4.7,-5.2L16,-4.9L7.6,2.6L10,13.5L0,7.6L-10,13.5L-7.6,2.6L-16,-4.9L-4.7,-5.2Z"/>
+          <text class="hi" x="{% if anchor == 'end' %}-20{% else %}20{% endif %}" y="7" text-anchor="{{ anchor }}">{{ name }}</text>
+        {% else %}
+          <rect x="-5" y="-5" width="10" height="10" transform="rotate(45)"/>
+          <text x="{% if anchor == 'end' %}-11{% else %}11{% endif %}" y="6" text-anchor="{{ anchor }}">{{ name }}</text>
+        {% endif %}
+      </g>
+    {% endfor %}
+  </g>
+
+  {# 수심 범례. 오른쪽 아래 — 띠 하나가 60 km 폭. 자리는 viewBox 의 귀퉁이에서 센다 #}
+  <g class="blegend" transform="translate({{ ross.legend_x }},{{ ross.legend_y }})">
+    <rect class="back" x="-12" y="-34" width="{{ ross.legend_w }}" height="78" rx="6"/>
+    <text class="cap" x="0" y="-9">수심 (m) · 대략</text>
+    {% for depth in ross.bathy_legend %}
+      <rect class="b{{ depth }}" x="{{ forloop.counter0|add:'0' }}" width="60" height="14"
+            transform="translate({% widthratio forloop.counter0 1 60 %},0)"/>
+      <text x="{% widthratio forloop.counter0 1 60 %}" y="30">{{ depth }}</text>
+    {% endfor %}
+  </g>
+
+  {# 축척 막대. 왼쪽 아래 #}
+  <g class="kscale" transform="translate({{ ross.scale_x }},{{ ross.scale_y }})">
+    <line x1="0" y1="0" x2="{{ ross.scale_bar }}" y2="0"/>
+    <line x1="0" y1="-7" x2="0" y2="7"/>
+    <line x1="{{ ross.scale_bar }}" y1="-7" x2="{{ ross.scale_bar }}" y2="7"/>
+    <text x="{{ ross.scale_mid }}" y="-12" text-anchor="middle">{{ ross.scale_label }}</text>
+  </g>
+
+  {# 시추 지점 #}
+  <g class="sites">
+    {% for p in ross.points %}
+    <a href="{% url 'dataset' p.slug %}" data-core="{{ p.label }}">
+      <g class="site{% if not p.exact %} approx{% endif %}"
+         transform="translate({{ p.x }},{{ p.y }})">
+        {% if not p.exact %}<circle class="halo" r="260" transform="scale({{ ross.mark }})"/>{% endif %}
+        <circle class="dot" r="70" transform="scale({{ ross.mark }})"/>
+        {# 이름표는 서버가 고른 자리·방향으로. 방향은 클래스다 — `.tag` 의 CSS
+           `text-anchor: middle` 이 속성보다 세다. 크기는 CSS 가 km 로 준다 #}
+        <text class="tag a-{{ p.anchor }}" x="{{ p.lx }}" y="{{ p.ly }}">{{ p.label }}</text>
+        <title>{{ p.label }} · {{ p.site }} · 슬라이드 {{ p.n_slides }}장 · 시야 {{ p.n_viewpoints }}개
+{% if p.exact %}실측 좌표{% else %}대략 위치 ({{ p.approx_note }}) — 정확한 좌표가 아직 없습니다{% endif %}{% if p.water_depth_m %} · 수심 {{ p.water_depth_m|floatformat:0 }} m{% endif %}</title>
+      </g>
+    </a>
+    {% endfor %}
+  </g>
+</svg>

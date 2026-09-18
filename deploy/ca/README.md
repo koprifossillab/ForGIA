@@ -1,4 +1,3 @@
-<!-- from DiaRUGA 34bdf21 (v0.20.0-3) deploy/ca/README.md — 그대로 -->
 # 사내 CA 인증서
 
 KOPRI 망은 TLS 를 가로채 자체 CA(`issuer=C=KR, O=KOPRI, CN=KOPRI SSL`)로 다시

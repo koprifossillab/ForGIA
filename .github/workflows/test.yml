@@ -1,0 +1,85 @@
+# 뷰어 시험과 뷰어 이미지 (P08 §5).
+#
+# **파이프라인 이미지는 여기서 굽지 않는다.** 7.2 GB 고, 무엇보다 러너에 GPU 가
+# 없어 **구워도 도는지 확인할 수가 없다** — "빌드는 됐는데 도는지는 모르는"
+# 이미지를 Docker Hub 에 올리는 것이 되기 때문이다. 그쪽은 서버에서 굽는다.
+# 대신 의존성이 썩는 것만 `deps.yml` 이 주기적으로 본다.
+#
+# **배포도 여기서 안 한다.** `deploy.sh` 는 사람이 부른다 — 스냅샷·기동 게이트·
+# smoke 가 거기 붙어 있고(`.guides/web/`), 그 판단을 자동화하면 규약이 지키려던
+# 것이 사라진다.
+name: 시험
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:        # 손으로 다시 돌린다 (흔들리는 것을 확인할 때)
+
+jobs:
+  test:
+    name: 뷰어 시험 (1~3 레이어)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # torch 는 안 깐다 — 뷰어는 Django 와 PIL 만 쓴다 (requirements-web.txt).
+      - run: pip install -r requirements-web.txt -r requirements-dev.txt
+
+      # **자료도 DB 도 저장소에 없다.** 시험이 픽스처를 전부 스스로 세운다.
+      # 마이그레이션은 실제로 돌린다 — `db_default` 를 빠뜨린 칸은 그래야 보인다.
+      # 브라우저 레이어는 뺀다 — 크로미움이 필요하고 아래 `browser` job 이 따로 돈다.
+      - name: manage.py test
+        run: python web/manage.py test viewer --exclude-tag browser --verbosity 2
+
+
+  browser:
+    name: 브라우저 레이어
+    runs-on: ubuntu-latest
+    # **실패해도 다른 것을 막지 않는다.** 헤드리스 환경 차이로 처음에는
+    # 흔들릴 것이고, 그때 1~3 레이어까지 같이 빨개지면 아무도 안 보게 된다.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements-web.txt -r requirements-dev.txt
+      - run: playwright install --with-deps chromium
+      - name: manage.py test (browser)
+        run: python web/manage.py test viewer.tests.browser --verbosity 2
+
+  build:
+    name: 뷰어 이미지 굽기
+    needs: test        # **시험을 통과한 것만 이미지가 된다**
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+
+      # 태그를 밀 때만 Docker Hub 로 올린다. 그 밖에는 **굽기만 한다** —
+      # Dockerfile 이 깨진 것을 잡되 판 번호를 어지럽히지 않는다.
+      # 판 번호는 사람이 정한다(semver, 사용자 방침).
+      - name: Docker Hub 로그인
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile.base
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: koprifossillab/forgia:${{ github.ref_type == 'tag' && github.ref_name || 'ci' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

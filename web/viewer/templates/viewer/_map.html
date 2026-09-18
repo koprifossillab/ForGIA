@@ -1,0 +1,144 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_map.html` 에서 왔다 — 한국 지도 갈래를 뺐다 (P01: 남극 코어뿐).
+{% endcomment %}
+{% comment %}
+  지도 껍데기. **권역마다 투영이 달라 SVG 는 갈라 두고, 옆의 범례·목록은 같은
+  것을 쓴다** — 지역 → 코어 → 슬라이드 나무는 어느 권역이든 똑같다.
+
+  `antmap.kind` 가 어느 지도인지 정한다. 뷰(`views.index`)가 권역에서 정하므로
+  여기서 다시 판단하지 않는다 — 두 곳에서 정하면 갈라진다.
+
+  지오 라이브러리도 타일 서버도 쓰지 않는다. 이 뷰어는 정적 파일이 하나도
+  없고, 지도 하나 때문에 외부 의존성과 사내망 TLS 문제를 들일 이유가 없다.
+{% endcomment %}
+<div class="mapwrap">
+{% comment %}
+    남극은 지도가 둘이다 — 전체와 로스해 확대. 둘 다 내려보내고 화면에서
+    갈아탄다(`.mapstage` 의 `zoomRoss`). 고른 것은 `localStorage` 에 남는다.
+    전체 지도 위의 틀 사각형과 "로스해" 이름도 확대로 가는 문이다.
+{% endcomment %}
+    <div class="mapstage" id="mapstage">
+      <div class="mapzoom" id="mapzoom" role="group" aria-label="지도 범위">
+        <button type="button" data-zoom="all" class="on" aria-pressed="true">남극 전체</button>
+        <button type="button" data-zoom="ross" aria-pressed="false">로스해</button>
+        {% if antmap.ross.outside %}
+        <span class="dim outside">로스해 틀 밖: {{ antmap.ross.outside|join:" · " }}</span>
+        {% endif %}
+      </div>
+      {% include "viewer/_map_ant.html" %}
+      {% include "viewer/_map_ross.html" with ross=antmap.ross only %}
+    </div>
+  {% include "viewer/_map_legend.html" %}
+</div>
+<script>
+(function () {
+  var KEY = 'forgia.mapzoom', stage = document.getElementById('mapstage'),
+      bar = document.getElementById('mapzoom');
+  if (!stage || !bar) return;
+  function apply(v) {
+    stage.classList.toggle('zoomRoss', v === 'ross');
+    bar.querySelectorAll('button[data-zoom]').forEach(function (b) {
+      var on = b.dataset.zoom === v;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function pick(v) {
+    apply(v);
+    try { localStorage.setItem(KEY, v); } catch (err) { /* 사생활 모드 */ }
+  }
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) { saved = null; }
+  apply(saved === 'ross' ? 'ross' : 'all');
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-zoom]');
+    if (b) pick(b.dataset.zoom);
+  });
+  // 전체 지도의 틀 사각형·"로스해" 글자를 눌러도 확대로 간다
+  stage.querySelectorAll('[data-zoom-to]').forEach(function (el) {
+    el.addEventListener('click', function () { pick(el.dataset.zoomTo); });
+  });
+})();
+</script>
+{% comment %}
+  보일 슬라이드 고르기 (DiaRUGA 203). 권역과 무관하다 — 한국 지도에도 붙는다.
+
+  끈 슬라이드는 나무 줄·(전부 꺼진) 지점·지역과 그 마커가 `mhid` 로 감춰지고,
+  마커의 「시야 N」과 코어의 「슬라이드 N장」은 남은 줄로 다시 센다 — 숫자가
+  안 따라오면 감춘 것이 보이는 것과 같은 수를 말한다. **`[hidden]` 을 안 쓴다**
+  — `.maptree .mslide` 의 display 에 진다(DiaRUGA 063). 감추는 규칙은 `base.html` 의
+  `.mhid` 다.
+{% endcomment %}
+<script>
+(function () {
+  var KEY = 'forgia.maphide', wrap = document.querySelector('.mapwrap'),
+      box = document.getElementById('mapfilter');
+  if (!wrap || !box) return;
+  function load() {
+    try {
+      var v = JSON.parse(localStorage.getItem(KEY) || '[]');
+      return Array.isArray(v) ? v.filter(function (x) { return typeof x === 'string'; }) : [];
+    } catch (e) { return []; }
+  }
+  function save(list) {
+    try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) { /* 사생활 모드 */ }
+  }
+  function markers(attr, code) {
+    return Array.prototype.filter.call(
+      wrap.querySelectorAll('.antmap a[data-' + attr + ']'),
+      function (a) { return a.dataset[attr] === code; });
+  }
+  function apply(hid) {
+    var off = {}, n = 0;
+    hid.forEach(function (s) { off[s] = true; });
+    box.querySelectorAll('input[data-slug]').forEach(function (cb) {
+      cb.checked = !off[cb.dataset.slug];
+    });
+    wrap.querySelectorAll('.maptree .mslide[data-slug]').forEach(function (li) {
+      var h = !!off[li.dataset.slug];
+      li.classList.toggle('mhid', h);
+      if (h) n++;
+    });
+    var siteVp = {};
+    wrap.querySelectorAll('.maptree .mcore[data-core]').forEach(function (core) {
+      var shown = 0, vp = 0;
+      core.querySelectorAll('.mslide[data-slug]').forEach(function (li) {
+        if (li.classList.contains('mhid')) return;
+        shown++; vp += Number(li.dataset.vp) || 0;
+      });
+      core.classList.toggle('mhid', shown === 0);
+      var nsl = core.querySelector('.nsl');
+      if (nsl) nsl.textContent = shown;
+      var site = core.closest('.msite');
+      if (site) siteVp[site.dataset.site] = (siteVp[site.dataset.site] || 0) + vp;
+      markers('core', core.dataset.core).forEach(function (a) {
+        a.classList.toggle('mhid', shown === 0);
+      });
+    });
+    wrap.querySelectorAll('.maptree .msite[data-site]').forEach(function (site) {
+      var gone = !site.querySelector('.mcore:not(.mhid)');
+      site.classList.toggle('mhid', gone);
+      markers('site', site.dataset.site).forEach(function (a) {
+        a.classList.toggle('mhid', gone);
+        var sub = a.querySelector('.sub');
+        if (sub) sub.textContent = '시야 ' + (siteVp[site.dataset.site] || 0);
+      });
+    });
+    var lbl = document.getElementById('mapfilter-n');
+    if (lbl) lbl.textContent = n ? '감춤 ' + n + '장' : '';
+  }
+  function current() {
+    return Array.prototype.map.call(
+      box.querySelectorAll('input[data-slug]:not(:checked)'),
+      function (cb) { return cb.dataset.slug; });
+  }
+  apply(load());
+  box.addEventListener('change', function (e) {
+    if (!e.target.matches('input[data-slug]')) return;
+    var list = current();
+    save(list); apply(list);
+  });
+  var all = document.getElementById('mapfilter-all');
+  if (all) all.addEventListener('click', function () { save([]); apply([]); });
+})();
+</script>

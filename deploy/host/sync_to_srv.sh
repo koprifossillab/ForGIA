@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA v0.29.0 deploy/host/sync_to_srv.sh — 이름·경로·포트를 바꿨고, 아직
-# `pipeline/`·`ops/` 가 없는 0단계에서도 돌도록 저장소 검사·글롭 두 줄만 손봤다 (P01 §3.1·§4)
 # 배포 파일을 /srv/ForGIA 으로 옮긴다 (.guides/web/deployment.md §2).
 #
 #   ./deploy/host/sync_to_srv.sh                 # 저장소에서 (개발 중)
@@ -126,8 +124,7 @@ if [ -n "$IMAGE" ]; then
     exit 0
 fi
 
-# `ops/` 가 아니라 배포 compose 로 저장소를 알아본다 — 0단계에는 `ops/` 가 아직 없다.
-[ -f "$REPO/deploy/srv/docker-compose.yml" ] || {
+[ -d "$REPO/ops" ] || {
     echo "저장소를 못 찾았다: $REPO — 저장소가 없으면 --from-image 를 쓸 것" >&2
     exit 1; }
 
@@ -167,7 +164,6 @@ done
 # **`migrate/`·`tools/` 는 안 옮긴다.** 이전기·일회성 도구라 운영이 스스로
 # 부를 일이 없다 — 필요하면 그때 `dbsync.sh <이름>` 으로 하나만 옮긴다.
 mkdir -p "$SRV/scripts"
-shopt -s nullglob        # 0단계에는 두 디렉토리가 비어 있거나 없다
 for f in "$REPO"/pipeline/*.py "$REPO"/ops/*.py; do
     n="$(basename "$f")"
     case "$n" in test_*) continue;; esac      # 시험은 운영에 안 간다

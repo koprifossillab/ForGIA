@@ -1,0 +1,518 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `index.html` 에서 왔다. 검출 열은 2단계에서 되살렸고 검토 열은 3단계.
+  분획·분할·합성 열은 ForGIA 가 더한 것. 한국 갈래(`_map_kr`)는 없다.
+{% endcomment %}
+{% comment %}
+  카드에서 표로 바꿨다. 슬라이드가 3장일 때는 카드가 읽혔지만 7장이 되면서
+  같은 항목을 카드마다 눈으로 찾아 옮겨 다니게 됐다. 같은 코어의 깊이별 변화를
+  보는 것이 목적이라 **세로로 줄이 맞아야** 비교가 된다.
+
+  줄 순서도 지역 → 코어 → 깊이다. 들어온 순서(id)로 두면 같은 코어의 깊이들이
+  떨어져 놓인다.
+
+  스타일을 base.html 에 둔 이유: 부모를 extends 한 템플릿에서 block 바깥에 적은
+  것은 렌더되지 않는다. 예전 <style> 블록이 실제로 그렇게 죽어 있었다 —
+  .dsmeta·.dsstate·.dsdesc 가 화면에 한 번도 먹은 적이 없다.
+{% endcomment %}
+{% block content %}
+{% comment %}
+  보기 방식은 둘 다 그려 두고 CSS 로 감춘다. 갈아탈 때 서버를 다시 부르지 않아
+  즉시 바뀌고, 스크롤 위치도 그대로 남는다.
+
+  아이콘은 탐색기의 "자세히 / 큰 아이콘" 과 같은 뜻으로 맞췄다 — 줄이 그어진
+  것이 표, 네모 넷이 카드다. 글자를 안 붙여도 무엇인지 읽힌다.
+{% endcomment %}
+<div class="pagehead">
+  {% comment %}
+    **문턱 조정 링크를 걷었다** (사용자 요청 2026-08-08). 화면(`/thresholds/`)과
+    `/d/<slug>/thresholds/` 는 그대로 산다 — 주소를 치면 열린다. 링크만 없다.
+
+    **CSS 로 감추지 않는다.** `display:none` 은 이 저장소에서 세 번 안 먹었다
+    (`.tools` 051 · `.nowrow` 083 · `[hidden]` 063) — 감춘 줄 알고 계속 내보이는
+    것이 없는 것보다 나쁘다. 되돌릴 때는 git 에서 이 줄을 되살린다.
+
+    **관리 링크도 여기서 걷었다** — 머리줄 오른쪽 끝의 톱니로 옮겼다
+    (`base.html`). 시스템 설정은 데이터셋 목록의 하위가 아니라 **같은 층의
+    최상위 메뉴**라, 제목 옆에 딸려 있으면 목록에 속한 것으로 읽힌다.
+  {% endcomment %}
+  <h2>데이터셋</h2>
+  {% include "viewer/_batchtag.html" with review_batch=review_batch only %}
+  {% comment %}
+    **표의 "검출" 칸이 어느 회차의 것인지**를 여기서 말한다 (DiaRUGA 088). 묶음을 갈면
+    같은 슬라이드의 숫자가 통째로 달라지는데, 표시가 없으면 자료가 변한 것인지
+    묶음이 바뀐 것인지 가릴 수가 없다.
+  {% endcomment %}
+  {% comment %}
+    권역 갈래는 서버가 거른다 — 표의 합계 줄과 지도 마커까지 함께 맞아야 하는데,
+    화면에서 줄만 감추면 합계가 안 맞는다. 링크라 즐겨찾기도 된다.
+  {% endcomment %}
+  <div class="areatabs" role="group" aria-label="권역">
+    {% for t in area.tabs %}
+      <a href="?area={{ t.key }}" class="{% if t.on %}on{% endif %}"
+         {% if t.on %}aria-current="true"{% endif %}
+         title="{{ t.label }} 시료 {{ t.n }}건">{{ t.label }}<span class="n">{{ t.n }}</span></a>
+    {% endfor %}
+  </div>
+  {% comment %}
+    권역 갈래는 자료가 없어도 남긴다 — 그것이 다른 권역으로 건너가는 길이다.
+    반면 보기 방식은 바꿀 화면이 있을 때만 낸다. 눌러도 아무 일이 없는 버튼은
+    "눌렀는데 안 되네" 로 읽힌다.
+  {% endcomment %}
+  {% if datasets %}
+  <div class="viewtoggle" id="viewtoggle" role="group" aria-label="보기 방식">
+    <button type="button" data-view="table" title="표로 보기 — 같은 항목이 세로로 맞아 비교하기 좋습니다"
+            aria-label="표로 보기">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <rect x="1" y="2.5" width="3" height="2.2" rx=".5"/>
+        <rect x="6" y="2.9" width="9" height="1.4" rx=".7"/>
+        <rect x="1" y="6.9" width="3" height="2.2" rx=".5"/>
+        <rect x="6" y="7.3" width="9" height="1.4" rx=".7"/>
+        <rect x="1" y="11.3" width="3" height="2.2" rx=".5"/>
+        <rect x="6" y="11.7" width="9" height="1.4" rx=".7"/>
+      </svg>
+    </button>
+    <button type="button" data-view="cards" title="카드로 보기 — 슬라이드 하나씩 훑어보기 좋습니다"
+            aria-label="카드로 보기">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <rect x="1" y="1" width="6.2" height="6.2" rx="1.2"/>
+        <rect x="8.8" y="1" width="6.2" height="6.2" rx="1.2"/>
+        <rect x="1" y="8.8" width="6.2" height="6.2" rx="1.2"/>
+        <rect x="8.8" y="8.8" width="6.2" height="6.2" rx="1.2"/>
+      </svg>
+    </button>
+    {% comment %}
+      "전체" 에는 지도가 없다 — 권역마다 투영이 달라 한 지도에 못 올린다.
+      버튼을 남겨 두면 눌러도 아무 일이 없다.
+    {% endcomment %}
+    {% if show_map %}
+    <button type="button" data-view="map" title="지도로 보기 — 어느 해역의 시료인지"
+            aria-label="지도로 보기">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M1.4 8h13.2M8 1.4a10 10 0 0 1 0 13.2M8 1.4a10 10 0 0 0 0 13.2"
+              fill="none" stroke="currentColor" stroke-width="1.1"/>
+      </svg>
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% comment %}
+    숨긴 항목 토글. **권역 갈래와 같이 링크다** — 서버가 걸러야 표·카드·지도가
+    같은 것을 보고, 코어 묶음의 "N장" 도 맞는다. 화면에서 줄만 감추면 셋이
+    서로 다른 것을 보게 된다.
+
+    **숨긴 것이 하나도 없으면 안 낸다** — 눌러도 아무 일이 없는 버튼은
+    "눌렀는데 안 되네" 로 읽힌다(보기 방식 버튼과 같은 규칙).
+  {% endcomment %}
+  {% if n_hidden or with_hidden %}
+  <a class="hidetoggle{% if with_hidden %} on{% endif %}"
+     href="?area={{ area.selected }}{% if not with_hidden %}&amp;hidden=1{% endif %}"
+     title="{% if with_hidden %}숨긴 슬라이드를 다시 감춥니다{% else %}숨긴 슬라이드 {{ n_hidden }}장을 흐리게 함께 보입니다{% endif %}">
+    <span class="hm">※</span>숨긴 항목<span class="n">{{ n_hidden }}</span></a>
+  {% endif %}
+</div>
+<p class="dim">NAS 에 새 슬라이드가 올라오면 자동으로 가져와 시야로 묶고 합성합니다.
+  검출·동정은 2단계부터입니다.</p>
+
+{% comment %}
+  알리기만 하고 갈 곳이 없으면 안내가 아니라 막다른 길이다. "전체" 로 가는
+  길을 함께 준다 — 거기에는 지역이 안 붙은 슬라이드도 나온다.
+{% endcomment %}
+{% if area.orphans and not area.is_all %}
+  <div class="note">권역이 정해지지 않은 슬라이드가 {{ area.orphans }}개 있습니다 —
+    지역(Site)이 붙어 있지 않아 한국·남극 어느 탭에도 나오지 않습니다.
+    <a href="?area=all"><b>전체</b>에서 보실 수 있고</a>, 정보 편집에서 지역을
+    지정하면 해당 권역 탭에 들어옵니다.</div>
+{% endif %}
+
+{% if not datasets %}
+  <div class="note">
+    {% for t in area.tabs %}{% if t.on %}{{ t.label }}{% endif %}{% endfor %}
+    시료는 아직 없습니다.
+    NAS 의 <code class="mono">Forams/&lt;촬영일&gt;/&lt;지역&gt;-&lt;지점&gt; &lt;깊이&gt;cm &gt;125um (관찰)/</code> 에
+    사진을 올리면 자동으로 들어옵니다.</div>
+{% else %}
+
+<div class="dsview" id="dsview">
+<div class="scroll asTable">
+<table class="dslist">
+  <thead>
+    <tr>
+      <th>슬라이드</th>
+      <th>지점</th>
+      <th>깊이</th>
+      <th title="체 눈 크기 — 폴더 이름의 >125um">분획</th>
+      <th title="분획을 1/n 로 갈라 픽킹했으면 n">분할</th>
+      <th><span class="unit">µm/px</span></th>
+      <th>사진</th>
+      <th>시야</th>
+      <th>평균 장수</th>
+      <th title="all-in-focus 합성이 끝난 시야">합성</th>
+      <th title="{% for c in count_classes %}{{ c.label }}{% if not forloop.last %}·{% endif %}{% endfor %}만 셉니다 (파편·비유공충 제외)">검출</th>
+      <th>시야당</th>
+      {% for c in count_classes %}<th title="{{ c.label }}">{{ c.short }}</th>{% endfor %}
+      <th class="revcol">검토</th>
+      <th></th>
+    </tr>
+  </thead>
+  {% comment %}
+    코어마다 `<tbody>` 하나. **표 안에서는 `<details>` 가 안 먹는다** — 표의
+    자식은 행 무리여야 해서 사이에 다른 요소를 낄 수 없다. `<tbody>` 는 표
+    하나에 여럿 둘 수 있고, 그 자체가 "여기까지가 한 묶음" 이라는 뜻이다.
+
+    머리줄이 숫자를 들고 있어야 접어 놓고도 쓸모가 있다. **평균은 넣지 않는다**
+    — 분모가 슬라이드마다 달라 다시 더할 수 없다(`datasets_total()` 머리말).
+    그 자리(평균 장수·시야당)는 비운다.
+  {% endcomment %}
+  {% for g in groups %}
+  <tbody class="csgroup" data-gkey="{{ g.key }}">
+    <tr class="chead" tabindex="0" role="button" aria-expanded="true"
+        title="눌러서 접거나 폅니다">
+      <td class="dsname" colspan="6">
+        {% comment %}
+          ▶ 는 장식이 아니다 — 접히는 머리줄은 "눌리는 것" 과 "지금 열렸나" 를
+          같이 내야 하는데 옅은 면만으로는 둘 다 못 낸다.
+        {% endcomment %}
+        <span class="tw" aria-hidden="true"></span>
+        {% if g.no_core %}<span class="dim">지점 미지정</span>
+        {% else %}{{ g.core }}{% endif %}
+        {% comment %}
+          **묶음이 비어도 머리줄은 남는다.** 한 코어가 통째로 숨겨졌을 때 머리줄까지
+          사라지면 그 코어가 이 권역에 없는 것이 되고, 묶음 숫자를 다 더해도 아래
+          합계와 안 맞는다 — 여기 숫자는 숨긴 것까지 센 값이기 때문이다.
+        {% endcomment %}
+        <span class="ghead-sub dim">{% if g.site %}{{ g.site }} · {% endif %}{{ g.n }}장{% if g.n_hidden %} <span class="hidemark" title="숨긴 슬라이드 {{ g.n_hidden }}장이 더 있습니다 — 아래 숫자에는 들어 있습니다">※{{ g.n_hidden }}</span>{% endif %}</span>
+      </td>
+      <td>{{ g.totals.n_images }}</td>
+      <td>{{ g.totals.n_groups }}</td>
+      <td></td>
+      <td>{{ g.totals.n_stacks }}</td>
+      <td>{{ g.totals.n_counted }}</td>
+      <td></td>
+      {% for c in g.totals.counted %}<td>{{ c.n }}</td>{% endfor %}
+      <td class="revcol">
+        <div class="revnum">{{ g.totals.reviewed_groups }}<span class="dim">/{{ g.totals.n_groups }}</span></div>
+        <div class="bar"><i style="width:{% widthratio g.totals.reviewed_groups g.totals.n_groups 100 %}%"></i></div>
+      </td>
+      {% comment %}
+        속성 칸이 머리줄에서는 비어 있었다. 코어 페이지로 가는 길을 여기 둔다 —
+        깊이 축과 암상이 그 화면에 있고, 목록은 그것을 못 보여준다.
+
+        **"코어 미지정" 묶음에는 안 낸다** — `Core` 행이 없어 갈 곳이 없다.
+        눌러도 아무 일이 없는 링크는 "눌렀는데 안 되네" 로 읽힌다.
+      {% endcomment %}
+      <td>{% if not g.no_core %}<a class="dsedit corelink"
+            href="{% url 'core' g.site_code g.core %}"
+            title="{{ g.core }} 를 깊이 방향으로 봅니다">보기</a>{% endif %}</td>
+    </tr>
+  {% for d in g.rows %}
+    {% comment %}
+      **한 코어에 슬라이드가 100장 넘는 날이 온다.** 그때 묶음 하나가 화면을
+      통째로 먹으면 접어 둔 보람이 없다. 표에서는 `<tbody>` 가 스크롤 상자가
+      못 되므로(그러려면 table-layout: fixed 로 열 너비를 못 박아야 한다)
+      **처음 열 줄만 내고 "나머지 N장 더 보기"** 로 간다 — 뼈대를 안 건드리고,
+      스크롤이 겹쳐 휠이 갇히는 일도 없다.
+    {% endcomment %}
+    {% comment %}
+      숨긴 줄은 **흐리게** 낸다 — 토글을 켜야 보이는 것이라 "지금 평소엔 안
+      보이는 것" 이 한눈에 읽혀야 한다. 색만으로는 안 된다(흑백 출력·색각):
+      이름 옆 `※` 가 흑백에서도 남는 몫이다.
+    {% endcomment %}
+    <tr class="{% if forloop.counter > 10 %}extra {% endif %}{% if d.hidden %}rowhidden{% endif %}">
+      <td class="dsname">
+        <a href="{% url 'dataset' d.slug %}">{{ d.label }}</a>
+        {% include "viewer/_obs.html" with d=d only %}
+        {% if d.state != "done" %}<span class="dsstate" title="{{ d.state_note }}">{{ d.state }}</span>{% endif %}
+        {% if d.description %}<div class="dsdesc">{{ d.description }}</div>{% endif %}
+        {% if d.missing_dir %}
+          <div class="dswarn">이미지 디렉토리를 찾을 수 없다: <code class="mono">{{ d.image_dir }}</code></div>
+        {% endif %}
+      </td>
+      <td class="dscore">
+        {% if d.site %}<span class="dim">{{ d.site }}</span> {% endif %}{{ d.core }}
+      </td>
+      <td>{% include "viewer/_depth.html" with depth_cm=d.depth_cm dash=1 only %}</td>
+      <td>{% if d.fraction_badge %}<span class="badge frac">{{ d.fraction_badge }}</span>{% else %}<span class="dim" title="분획이 아직 채워지지 않았습니다">—</span>{% endif %}</td>
+      <td>{% if d.split_denom %}1/{{ d.split_denom }}{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td class="mono">{% if d.um_per_pixel %}{{ d.um_per_pixel|floatformat:4 }}{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td>{{ d.n_images }}</td>
+      <td>{{ d.n_groups }}</td>
+      <td>{{ d.mean_size }}</td>
+      <td>{{ d.n_stacks }}</td>
+      {% if d.mean_counted is not None %}
+        <td title="검출 개체 {{ d.n_detected }}개 중 세는 분류{% if d.excluded %} — 합계에서 뺐습니다{% endif %}">{{ d.n_counted }}{% if d.excluded %}<span class="exmark">*</span>{% endif %}</td>
+        <td{% if d.detected_groups < d.n_groups %} class="partial" title="{{ d.n_groups }}개 시야 중 {{ d.detected_groups }}개만 검출됨 — 평균은 그 시야들 기준"{% endif %}>
+          {{ d.mean_counted }}{% if d.detected_groups < d.n_groups %}<span class="dim">*</span>{% endif %}
+        </td>
+        {% for c in d.counted %}<td>{{ c.n }}</td>{% endfor %}
+      {% else %}
+        <td colspan="{{ count_classes|length|add:2 }}" class="dim nodet">검출 결과 없음</td>
+      {% endif %}
+      <td class="revcol">
+        <div class="revnum">{{ d.reviewed_groups }}<span class="dim">/{{ d.n_groups }}</span></div>
+        <div class="bar"><i style="width:{% widthratio d.reviewed_groups d.n_groups 100 %}%"></i></div>
+      </td>
+      <td><a class="dsedit" href="{% url 'dataset_edit' d.slug %}">정보 편집</a></td>
+    </tr>
+  {% endfor %}
+  {% if g.n > 10 %}
+    <tr class="morerow"><td colspan="99">
+      <button type="button" class="morebtn">나머지 {{ g.n|add:"-10" }}장 더 보기</button>
+    </td></tr>
+  {% endif %}
+  </tbody>
+  {% endfor %}
+  <tfoot>
+    <tr>
+      <td class="dsname">합계 <span class="dim">{{ datasets|length }}장</span></td>
+      <td colspan="5"></td>
+      <td>{{ totals.n_images }}</td>
+      <td>{{ totals.n_groups }}</td>
+      <td></td>
+      <td>{{ totals.n_stacks }}</td>
+      <td>{{ totals.n_counted }}</td>
+      <td></td>
+      {% for c in totals.counted %}<td>{{ c.n }}</td>{% endfor %}
+      <td class="revcol">
+        <div class="revnum">{{ totals.reviewed_groups }}<span class="dim">/{{ totals.n_groups }}</span></div>
+        <div class="bar"><i style="width:{% widthratio totals.reviewed_groups totals.n_groups 100 %}%"></i></div>
+      </td>
+      <td></td>
+    </tr>
+  </tfoot>
+</table>
+</div>
+
+{% comment %} 지도 판 — 어느 해역의 시료인지. "전체" 에는 없다. {% endcomment %}
+{% if show_map %}<div class="asMap">{% include "viewer/_map.html" %}</div>{% endif %}
+
+{% comment %}
+  카드 판 — 슬라이드 하나씩 훑어볼 때. 표와 같은 값을 보인다.
+
+  카드는 `<details>/<summary>` 로 그대로 된다(표와 달리 낄 자리가 있다).
+  **여닫는 상태는 표와 같은 열쇠를 쓴다** — 보기 방식을 바꿨는데 접힘이 달라지면
+  두 화면이 남남이 된다.
+{% endcomment %}
+<div class="asCards cgroups">
+{% for g in groups %}
+<details class="cgroup" data-gkey="{{ g.key }}" open>
+  <summary>
+    {% comment %}
+      브라우저가 그리는 삼각형을 끄고(::marker) 표와 같은 ▶ 를 직접 그린다 —
+      모양이 달라지면 두 화면이 남남이 된다.
+    {% endcomment %}
+    <span class="tw" aria-hidden="true"></span>
+    <b>{% if g.no_core %}<span class="dim">지점 미지정</span>{% else %}{{ g.core }}{% endif %}</b>
+    <span class="dim">{% if g.site %}{{ g.site }} · {% endif %}{{ g.n }}장{% if g.n_hidden %} <span class="hidemark" title="숨긴 슬라이드 {{ g.n_hidden }}장이 더 있습니다 — 아래 숫자에는 들어 있습니다">※{{ g.n_hidden }}</span>{% endif %}</span>
+    <span class="gsum dim">사진 {{ g.totals.n_images }} · 시야 {{ g.totals.n_groups }} ·
+      합성 {{ g.totals.n_stacks }} · 검출 {{ g.totals.n_counted }} · 검토 {{ g.totals.reviewed_groups }}/{{ g.totals.n_groups }}</span>
+    {% comment %}
+      표의 머리줄과 같은 길. summary 안의 링크는 클릭이 여닫기로도 가므로
+      전파를 끊는다 — 누르면 페이지가 바뀌면서 묶음까지 접히면 안 된다.
+    {% endcomment %}
+    {% if not g.no_core %}<a class="dsedit corelink" href="{% url 'core' g.site_code g.core %}"
+       onclick="event.stopPropagation()">보기</a>{% endif %}
+  </summary>
+  {% comment %}
+    한 코어에 슬라이드가 아주 많아지면 묶음 하나가 화면을 통째로 먹는다.
+    카드는 표와 달리 상자가 스크롤이 되므로 여기서 끊는다.
+  {% endcomment %}
+  <div class="cards{% if g.n > 10 %} capped{% endif %}">
+{% for d in g.rows %}
+  <div class="card{% if d.hidden %} rowhidden{% endif %}">
+    <h3><a href="{% url 'dataset' d.slug %}">{{ d.label }}</a>
+      {% include "viewer/_obs.html" with d=d only %}</h3>
+    <div class="dsmeta">
+      {% if d.site %}{{ d.site }}{% endif %}{% if d.core %} · {{ d.core }}{% endif %}{% if d.depth_cm %} · {% include "viewer/_depth.html" with depth_cm=d.depth_cm only %}{% endif %}{% if d.fraction_badge %} · {{ d.fraction_badge }}{% endif %}{% if d.split_denom %} · 1/{{ d.split_denom }}{% endif %}
+      {% if d.um_per_pixel %}<span class="mono">· {{ d.um_per_pixel|floatformat:4 }} µm/px</span>{% endif %}
+      {% if d.state != "done" %}<span class="dsstate" title="{{ d.state_note }}">{{ d.state }}</span>{% endif %}
+      <a class="dsedit" href="{% url 'dataset_edit' d.slug %}">정보 편집</a>
+    </div>
+    {% if d.description %}<div class="dsdesc">{{ d.description }}</div>{% endif %}
+    {% if d.missing_dir %}
+      <div class="dswarn">이미지 디렉토리를 찾을 수 없다: <code class="mono">{{ d.image_dir }}</code></div>
+    {% endif %}
+    {% comment %}
+      두 줄을 축으로 가른다 — **첫째 = 얼마나 있고 얼마나 봤나 · 둘째 = 무엇이
+      있었나.** 예전에는 윗변 선이 `평균 장수` 와 `검출` 사이를 지나 아랫줄이
+      "분류별 + 규모 둘 + 진행률" 잡탕이었다.
+
+      그러면 둘째 줄이 정확히 `ClassDef.counted` 만 남아 **분류를 더하면 저절로
+      한 칸 는다** — 038~040 과 같은 방향이다.
+
+      `검토` 는 검출과 무관한 값인데 예전에는 `mean_counted` 의 if 안에 있어
+      **검출이 없는 슬라이드는 검토 수가 아예 안 보였다.** 올리면서 밖으로 뺀다.
+    {% endcomment %}
+    <div class="stat-row">
+      <div class="stat"><b>{{ d.n_images }}</b><span>사진</span></div>
+      <div class="stat"><b>{{ d.n_groups }}</b><span>시야</span></div>
+      <div class="stat"><b>{{ d.mean_size }}</b><span>평균 장수</span></div>
+      <div class="stat"><b>{{ d.n_stacks }}</b><span>합성</span></div>
+      {% if d.mean_counted is not None %}
+        <div class="stat" title="검출 개체 {{ d.n_detected }}개 중 세는 분류"><b>{{ d.n_counted }}{% if d.excluded %}<span class="exmark">*</span>{% endif %}</b><span>검출</span></div>
+        <div class="stat"><b>{{ d.mean_counted }}</b><span>시야당</span></div>
+      {% else %}
+        <span class="dim nodet">검출 결과 없음</span>
+      {% endif %}
+      <div class="stat"><b>{{ d.reviewed_groups }}<span class="dim" style="font-size:13px">/{{ d.n_groups }}</span></b><span>검토</span></div>
+    </div>
+  </div>
+{% endfor %}
+  </div>
+</details>
+{% endfor %}
+</div>
+</div>
+
+{% comment %}
+  **어긋남을 적는다.** 합계는 `집계 제외` 만 읽고 `숨김` 은 안 읽는다 — 읽으면
+  보기 토글 한 번에 같은 자료가 다른 숫자를 낸다. 그 대가로 "보이는 것의 합 ≠
+  합계" 가 생기는데, 안 적으면 이유 없는 어긋남으로 보인다.
+
+  **표 안(`tfoot`)에 두지 않는다.** 표가 `.scroll` 안에서 가로로 넘치므로 긴
+  글이 스크롤 밖으로 잘려 나간다 — 실제로 문장 끝이 안 보였다.
+
+  **`.dsview` 바깥 맨 끝이다.** 표 바로 뒤에 두었더니 카드·지도로 갈아탄
+  화면에서 표가 감춰지면서 이 글이 그 자리를 물려받아 **목록 맨 위로 올라왔다.**
+  여기 두면 세 보기 모두에서 내용 아래에 놓인다.
+{% endcomment %}
+{% if totals.n_excluded or totals.n_hidden_in %}
+<p class="totnote">
+  {% if totals.n_excluded %}<span class="exmark">*</span>
+    슬라이드 {{ totals.n_excluded }}장을 집계에서 뺐습니다 — 같은 시료를 여러 번
+    관찰한 것이 겹쳐 세지지 않도록 정보 편집에서 지정한 것입니다.{% endif %}
+  {% if totals.n_hidden_in %}<span class="hidemark">※</span>
+    숨긴 슬라이드 {{ totals.n_hidden_in }}장이 합계에 <b>들어 있습니다</b>
+    — 숨김은 보기 상태라 숫자를 바꾸지 않습니다. 합계에서도 빼려면 그 슬라이드의
+    정보 편집에서 <b>집계에서 제외하기</b>를 함께 켜세요.{% endif %}
+</p>
+{% endif %}
+
+<script>
+(function () {
+  // 고른 방식을 기억한다. 매번 고르게 하면 도구가 아니라 일거리가 된다.
+  var KEY = 'forgia.dsview', box = document.getElementById('dsview'),
+      bar = document.getElementById('viewtoggle');
+  function apply(v) {
+    box.classList.toggle('showCards', v === 'cards');
+    box.classList.toggle('showMap', v === 'map');
+    bar.querySelectorAll('button').forEach(function (b) {
+      var on = b.dataset.view === v;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  var saved;
+  try { saved = localStorage.getItem(KEY); } catch (e) { saved = null; }
+  // **지도가 없는 화면에서는 지도로 열지 않는다.** "전체" 에는 지도가 없는데
+  // 지난번에 지도를 골라 둔 사람이 들어오면 표도 카드도 감춘 빈 화면이 된다 —
+  // 인자 없이 들어오면 "전체" 가 열리므로 그것이 곧 첫 화면이 된다.
+  // **기억은 지우지 않는다** — 남극으로 가면 다시 지도로 열려야 한다.
+  var hasMap = !!box.querySelector('.asMap');
+  var want = (saved === 'cards' || saved === 'map') ? saved : 'table';
+  apply(want === 'map' && !hasMap ? 'table' : want);
+  bar.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-view]');
+    if (!b) return;
+    apply(b.dataset.view);
+    try { localStorage.setItem(KEY, b.dataset.view); } catch (err) { /* 사생활 모드 */ }
+  });
+})();
+
+// --- 코어 묶음 접기 --------------------------------------------------------
+// 표와 카드가 **같은 열쇠**를 쓴다. 보기 방식을 바꿨는데 접힘이 달라지면 두
+// 화면이 남남이 된다.
+//
+// **접은 것만 적어 둔다.** 편 것을 적으면 새 코어가 들어왔을 때 목록에 없어
+// 접힌 채로 열린다 — 그러면 첫 화면이 빈 목록이다. 기본은 늘 펴짐이다.
+(function () {
+  var KEY = 'forgia.dsclosed', box = document.getElementById('dsview');
+  if (!box) return;
+  var shut = {};
+  try {
+    (JSON.parse(localStorage.getItem(KEY) || '[]') || []).forEach(function (k) {
+      shut[k] = 1;
+    });
+  } catch (e) { /* 사생활 모드 · 깨진 값 */ }
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(Object.keys(shut))); }
+    catch (e) { /* 사생활 모드 */ }
+  }
+
+  // 한 열쇠의 상태를 표와 카드 양쪽에 함께 그린다.
+  function paint(key) {
+    var on = !shut[key];
+    box.querySelectorAll('.csgroup[data-gkey]').forEach(function (tb) {
+      if (tb.dataset.gkey !== key) return;
+      tb.classList.toggle('closed', !on);
+      var h = tb.querySelector('.chead');
+      if (h) h.setAttribute('aria-expanded', on ? 'true' : 'false');
+    });
+    box.querySelectorAll('.cgroup[data-gkey]').forEach(function (dt) {
+      // `<details>` 는 여닫힘을 스스로 알린다 — aria-expanded 를 따로 얹지
+      // 않는다. 표의 머리줄은 행이라 그 뜻이 없어서 직접 붙인다.
+      if (dt.dataset.gkey === key) dt.open = on;
+    });
+  }
+
+  function toggle(key) {
+    if (shut[key]) delete shut[key]; else shut[key] = 1;
+    save(); paint(key);
+  }
+
+  var keys = {};
+  box.querySelectorAll('[data-gkey]').forEach(function (el) { keys[el.dataset.gkey] = 1; });
+  Object.keys(keys).forEach(paint);
+
+  box.addEventListener('click', function (e) {
+    // 묶음 안의 "더 보기" — 이 묶음만 마저 편다. 접기로 되돌리지는 않는다
+    // (열 줄로 되접으면 방금 찾던 줄이 다시 사라진다).
+    var more = e.target.closest('.morebtn');
+    if (more) {
+      var tb = more.closest('.csgroup');
+      if (tb) { tb.classList.add('all'); more.closest('.morerow').remove(); }
+      return;
+    }
+    // 머리줄 안의 링크(코어 페이지 "보기")는 제 일을 한다 — 여기서 잡으면
+    // 페이지를 떠나면서 묶음까지 접힌 것으로 적힌다.
+    if (e.target.closest('a')) return;
+    var head = e.target.closest('.chead');
+    if (head) {
+      var tb2 = head.closest('.csgroup');
+      if (tb2) toggle(tb2.dataset.gkey);
+      return;
+    }
+    // 카드 쪽은 `<details>` 가 스스로 여닫으므로 기억만 맞춰 준다. 이 자리에서
+    // preventDefault 를 하면 브라우저 기본 동작과 싸운다.
+    var sm = e.target.closest('.cgroup > summary');
+    if (sm) {
+      var dt = sm.parentElement, k = dt.dataset.gkey;
+      // click 시점의 dt.open 은 아직 바뀌기 전이다 — 뒤집힌 값을 적는다.
+      if (dt.open) shut[k] = 1; else delete shut[k];
+      save();
+      // 표 쪽도 같이 맞춘다 (카드에서 접고 표로 갈아탔을 때)
+      box.querySelectorAll('.csgroup[data-gkey]').forEach(function (tb3) {
+        if (tb3.dataset.gkey !== k) return;
+        tb3.classList.toggle('closed', !!shut[k]);
+        var h = tb3.querySelector('.chead');
+        if (h) h.setAttribute('aria-expanded', shut[k] ? 'false' : 'true');
+      });
+    }
+  });
+
+  // 머리줄은 행이라 기본으로 키를 안 받는다. role="button" 을 붙였으니
+  // 엔터·스페이스도 눌린 것으로 쳐야 한다.
+  box.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var head = e.target.closest && e.target.closest('.chead');
+    if (!head) return;
+    e.preventDefault();
+    var tb = head.closest('.csgroup');
+    if (tb) toggle(tb.dataset.gkey);
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

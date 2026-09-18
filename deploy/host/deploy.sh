@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA v0.29.0 deploy/host/deploy.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 판을 갈아 끼운다 (.guides/web/deployment.md §5).
 #
 #   /srv/ForGIA/bin/deploy.sh v0.1.1

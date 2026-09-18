@@ -1,0 +1,25 @@
+{% comment %}
+  DiaRUGA v0.29.0 `_delbtn.html` 에서 왔다.
+{% endcomment %}
+{% comment %}
+  지우기 버튼 하나. 받는 것: `kind`(site·locality·sample) · `pk` · `label` ·
+  `why`(막는 이유 문자열, 비어 있으면 지울 수 있다).
+
+  **막는 이유를 미리 받아 온다.** 눌러 보고 "지울 수 없습니다" 를 만나면 무엇을
+  먼저 치워야 하는지 알 수 없다 — 잠긴 버튼에 그 이유를 달아 둔다.
+
+  **서버가 다시 검사한다** (`manage_data.delete`). 화면에서 막는 것은 막는 것이
+  아니다 — 이 저장소가 "읽기 전용이라 적어 놓고 CSS 로 버튼만 감춘" 화면에서 한
+  번 당했다.
+{% endcomment %}
+{% if why %}
+  <button type="button" class="btn del" disabled title="{{ why }}">지우기</button>
+{% else %}
+  <form method="post" style="display:inline">{% csrf_token %}
+    <input type="hidden" name="act" value="delete">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="pk" value="{{ pk }}">
+    <button type="submit" class="btn del"
+            data-ask="{{ label }} 을(를) 지웁니다. 되돌릴 수 없습니다. 계속할까요?">지우기</button>
+  </form>
+{% endif %}

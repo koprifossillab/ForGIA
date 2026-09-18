@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/host/install-nginx-test.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # `/ForGIATest/` 를 nginx 에 얹는다 (085). **root 로 돌린다.**
 #
 #   sudo bash deploy/host/install-nginx-test.sh

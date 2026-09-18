@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# from DiaRUGA v0.29.0 deploy/poll_nas.sh — 이름·경로만 바꿨다. **아직 손봐야 한다**
-# (P01 §3.1 '손봄'): 검출 단계의 인자(`--backend sam2`·`--scale`·`--min-um`·`--max-um`)가
-# 규조 것 그대로다. 2단계(`segment_forams`·새 `judge`)와 함께 고친다. 그 전에는 cron 에 걸지 말 것.
+# DiaRUGA v0.29.0 `deploy/poll_nas.sh` 에서 왔다 — SAM2 갈래(`--points-per-batch`)만 뺐다.
 # NAS 를 주기적으로 보고, 복사가 끝난 새 슬라이드를 끝까지 돌린다 (P03 5단계).
 #
 #   * * * * * /srv/ForGIA/bin/poll_nas.sh
@@ -48,7 +46,6 @@ HOST_PY="${FORGIA_PY:-$HOME/venv/ForGIA/bin/python}"
 LOG_DIR=/data3/ForGIA/logs
 LOCK=/tmp/ForGIA-poll.lock
 STABLE_MIN="${STABLE_MIN:-5}"   # 이만큼(분) 폴더가 안 변해야 가져온다
-PPB="${PPB:-16}"                # points-per-batch — 이 장비(3060 Ti 8 GB) 기준
 # **어느 묶음에 넣을지는 DB 가 정한다** (079). 예전에는 여기 이름 하나를 박아
 # 두었는데, 묶음이 여럿인 것이 기본이 되면서 그것이 문제가 됐다 — 새 슬라이드가
 # 그 묶음에만 들어가고, 사람이 다른 묶음으로 갈아타면 **빈 화면**이 된다.
@@ -164,7 +161,7 @@ echo "$TODO" | while IFS=$'\t' read -r slug state image_dir; do
             say "$slug: 그룹핑 실패"
             continue
         fi
-        # 지점의 메타데이터를 KPDC 에서 긁는다 (197). 그룹핑이 폴더 이름으로
+        # 지점의 메타데이터를 KPDC 에서 긁는다 (DiaRUGA 197). 그룹핑이 폴더 이름으로
         # 지점을 만든 직후라 좌표·수심·채취일이 비어 있다 — 같은 코어의 공개
         # 항목에서 **빈 칸만** 채운다. 이미 긁은 지점이면 안에서 건너뛴다.
         #
@@ -198,16 +195,17 @@ echo "$TODO" | while IFS=$'\t' read -r slug state image_dir; do
     fi
 done
 
-# 4b) 검출 — **묶음마다 한 바퀴씩** (079).
+# 4b) 검출 — **묶음마다 한 바퀴씩** (DiaRUGA 079).
 #
 # 묶음이 바깥 고리인 것이 요점이다. 검토 중인 묶음이 **모든 새 슬라이드에 대해**
 # 먼저 채워지고, 그다음 옛 회차가 따라온다 — 사람이 지금 보고 있는 화면이 가장
-# 빨리 메워진다. GPU 는 한 번에 하나만 도므로(잠금이 segment_forams 안에 있다)
-# 이 순서가 곧 기다리는 순서다.
+# 빨리 메워진다. GPU 는 한 번에 하나만 도므로(잠금이 segment_forams 안에 있고,
+# 그 잠금 파일은 DiaRUGA 와 같은 것이다 — P01 5절) 이 순서가 곧 기다리는 순서다.
 #
-# 조리법은 셸에서 뜯지 않는다 — 파이썬이 인자 한 줄로 만들어 준다.
+# 조리법은 셸에서 뜯지 않는다 — 파이썬이 인자 한 줄로 만들어 준다. DiaRUGA 의
+# `--points-per-batch` 갈래는 없다 — 백엔드가 YOLO 하나라 VRAM 인자가 없다.
 if [ -n "$DETECT_BATCH" ]; then
-    PLAN=$(printf '%s\t--backend sam2 --scale 1.0 --points-per-side 48 --min-um 10 --max-um 150' "$DETECT_BATCH")
+    PLAN=$(printf '%s\t--backend yolo --scale 1.0' "$DETECT_BATCH")
     say "DETECT_BATCH 가 주어졌다 — $DETECT_BATCH 하나만 돈다"
 else
     PLAN=$(run "$T_SCAN" batch_plan.py --args 2>>"$LOG") || PLAN=""
@@ -221,13 +219,9 @@ printf '%s\n' "$PLAN" | while IFS=$'\t' read -r batch bargs; do
     say "=== 묶음 $batch ==="
     echo "$TODO" | while IFS=$'\t' read -r slug state image_dir; do
         [ -n "$slug" ] || continue
-        # `--points-per-batch` 는 이 장비의 VRAM 사정이라 조리법이 아니라
-        # 여기서 준다. SAM2 만 본다 — YOLO 는 이 인자를 안 받는다.
-        extra=""
-        case "$bargs" in *"--backend sam2"*) extra="--points-per-batch $PPB";; esac
         # shellcheck disable=SC2086
         if ! run "$T_PIPE" segment_forams.py --slide "$slug" \
-                --batch "$batch" $bargs $extra >>"$LOG" 2>&1; then
+                --batch "$batch" $bargs >>"$LOG" 2>&1; then
             say "$slug: 검출 실패 ($batch)"
             continue
         fi
@@ -237,7 +231,7 @@ done
 
 # 5) 자료를 바꿨으면 **화면이 그것을 그릴 수 있는지** 본다.
 #
-# **반입만으로 뷰어가 통째로 500 이 된 적이 있다** (057). 슬러그 하나가 URL 규칙
+# **반입만으로 뷰어가 통째로 500 이 된 적이 있다** (DiaRUGA 057). 슬러그 하나가 URL 규칙
 # (`urls.py` 의 `<slug:slug>`)을 어기자 목록 템플릿이 링크를 만들다 죽었다 —
 # 그 슬라이드 한 장이 아니라 **모든 화면**이 안 떴고, 11분 36초 동안 아무도 몰랐다.
 #
@@ -254,7 +248,7 @@ if [ "$page" = "200" ]; then
 else
     say "!! 뷰어가 목록을 못 낸다 (HTTP ${page:-없음}) — 방금 반입·처리한 것을 볼 것"
     # 로그에만 적으면 읽는 사람이 없는 동안 꺼진 안전망이다. `/healthz` 까지
-    # 나른다 — 뷰어의 상태와 `smoke.sh` 가 그 깃발을 본다 (034 · db_sentinel).
+    # 나른다 — 뷰어의 상태와 `smoke.sh` 가 그 깃발을 본다 (DiaRUGA 034 · db_sentinel).
     "$HOST_PY" "$SCRIPTS/db_sentinel.py" raise poll_nas \
         "목록 페이지가 ${page:-무응답} 이다 (자동 처리 뒤). 새 슬라이드의 슬러그를 볼 것" \
         >>"$LOG" 2>&1 || say "깃발을 세우지 못했다"

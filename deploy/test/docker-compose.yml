@@ -1,16 +1,13 @@
-# from DiaRUGA v0.29.0 deploy/test/docker-compose.yml — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # ForGIA 테스트 인스턴스 — 80 포트의 /ForGIATest/ 아래.
 #
 #   cd /srv/ForGIA/test && docker compose up -d web
 #
-# **운영과 갈라 두는 것이 셋이다.** 하나라도 운영과 같아지면 테스트가 운영을
-# 만진다 — 사람의 교정은 재생성 불가다.
+# **운영과 갈라 두는 것이 넷이다.** 하나라도 운영과 같아지면 테스트가 운영을
+# 만진다 — 사람의 교정 7,472건은 재생성 불가다.
 #
 #   1. DB       /srv/ForGIA/test/db/  ← 사본. 운영의 db/ 를 절대 물리지 않는다
-#   2. 포트     127.0.0.1:8093 (운영은 8092)
-#   3. 프로젝트 이름 forgia-test (운영은 forgia)
-#
-# DiaRUGA 의 노두 사진 사본(outcrop/)은 없다 — 육상 노두 갈래를 안 가져왔다 (P01 §6).
+#   3. 포트     127.0.0.1:8093 (운영은 8092)
+#   4. 프로젝트 이름 forgia-test (운영은 forgia)
 #
 # **파이프라인·dbtool 서비스를 여기 두지 않는다.** 테스트에서 GPU 작업이나
 # DB 스크립트를 돌릴 일이 없고, 있으면 운영 자리와 헷갈린다.
@@ -33,6 +30,7 @@ services:
       - /srv/ForGIA/test/db:/srv/ForGIA/test/db
       # 사진·산출물은 운영과 함께 본다 (읽기 + 썸네일 캐시)
       - /data3/ForGIA:/data3/ForGIA
+      # 노두 현장 사진 **사본**. NAS 원본을 물리면 테스트에서 지운 것이 진짜로 지워진다
     ports:
       # 루프백에만. 바깥으로 나가는 문은 nginx 의 /ForGIATest/ 하나뿐이다
       - "127.0.0.1:8093:9090"

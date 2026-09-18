@@ -1,0 +1,229 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `system_settings_ops.html` 에서 왔다 — 조리법이 ForGIA 의 judge 문턱(conf·크기)이다.
+{% endcomment %}
+{% block title %}시스템 설정 · 운영 — ForGIA{% endblock %}
+{% block subtitle %}<b>시스템 설정</b> · 운영{% endblock %}
+{% block content %}
+{% comment %}
+  **`preview_url` 을 손으로 넘긴다.** `only` 가 바깥 컨텍스트를 끊으므로
+  컨텍스트 프로세서(`viewer/context.py`)가 넣어 준 값도 조각 안에서는
+  안 보인다 — 안 넘기면 미리보기 탭이 **예외도 경고도 없이 사라진다.**
+  실제로 그렇게 한 번 짰다.
+{% endcomment %}
+{% include "viewer/_system_settings_nav.html" with here="ops" preview_url=preview_url only %}
+
+{% if msg %}<div class="ok-banner">{{ msg }}</div>{% endif %}
+{% if err %}<div class="err-banner">{{ err }}</div>{% endif %}
+
+<section class="panel">
+  <h2>검토할 묶음</h2>
+  <p class="dim" style="font-size:12px;margin:2px 0 10px">
+    뷰어가 보여줄 검출을 정합니다. <b>교정은 묶음마다 따로 남아 있어 안 지워집니다.</b>
+    바꾼 뒤에는 <span class="mono">refilter.py</span> 를 돌려 판정 캐시를 맞추십시오.
+  </p>
+  {% if batches %}
+  <table class="mtab">
+    <thead><tr><th>묶음</th><th>코드</th><th>시야</th><th>빈 화면</th><th>이미지</th>
+               <th>개체</th><th></th></tr></thead>
+    <tbody>
+      {% for b in batches %}
+      <tr{% if b.on %} class="nowrow"{% endif %}>
+        <td><b>{{ b.batch.label }}</b>
+            {% if b.on %} <span class="nowtag">검토 중</span>{% endif %}
+            {% if b.batch.note %}<div class="dim" style="font-size:11px">{{ b.batch.note|truncatechars:90 }}</div>{% endif %}</td>
+        {% comment %}
+          카탈로그 번호의 꼬리 (`catalog.py`). **비면 그 묶음의 개체는 번호가 없다** —
+          `check_db` 9번이 센다. 개체가 있는 묶음은 바꾸지 말 것 — 번호가 이미
+          적혔을 수 있다 (칸을 잠그지는 않는다: 처음 정하는 길이 이것뿐이다)
+        {% endcomment %}
+        <td>
+          <form method="post" class="inline" title="{% if b.n_objects %}개체 {{ b.n_objects }}개가 이 코드로 번호를 받았을 수 있습니다 — 바꾸면 적어 둔 번호가 낡습니다{% else %}카탈로그 번호의 꼬리 (영문·숫자 여덟 자 안){% endif %}">{% csrf_token %}
+            <input type="hidden" name="act" value="batch_code">
+            <input type="hidden" name="batch" value="{{ b.batch.pk }}">
+            <input type="text" name="code" value="{{ b.batch.code }}" maxlength="8" size="5"
+                   class="code{% if not b.batch.code %} missing{% endif %}" placeholder="없음">
+            <button type="submit">적기</button>
+          </form>
+        </td>
+        <td class="num">{{ b.n_views }}</td>
+        {% comment %} 빈 화면이 생기는 것은 경고다 — 색으로 드러낸다 {% endcomment %}
+        <td class="num">{% if b.n_blank %}<b style="color:var(--warn)">{{ b.n_blank }}</b>{% else %}0{% endif %}</td>
+        <td class="num">{{ b.n_images }}</td>
+        <td class="num">{{ b.n_objects }}</td>
+        <td>
+          {% if not b.on %}
+          <form method="post" class="inline">{% csrf_token %}
+            <input type="hidden" name="act" value="review_batch">
+            <input type="hidden" name="batch" value="{{ b.batch.pk }}">
+            <button type="submit"
+                    onclick="return confirm('검토할 묶음을 {{ b.batch.label }} 로 바꿉니다.\n\n· 시야 {{ b.n_views }}개가 이 묶음의 검출을 봅니다{% if b.n_blank %}\n· 시야 {{ b.n_blank }}개는 이 묶음에 검출이 없어 빈 화면이 됩니다{% endif %}\n· 교정은 묶음마다 따로 남아 안 지워집니다\n\n되돌리려면 다시 여기서 고르면 됩니다.')">
+              이것으로 검토
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="dim">검출이 있는 묶음이 없습니다.</p>
+  {% endif %}
+</section>
+
+
+<section class="panel">
+  <h2>새 자료를 채우는 순서</h2>
+  {% comment %}
+    **묶음이 여럿인 것이 기본이다** (DiaRUGA 079). 새 슬라이드는 조리법이 적힌 묶음
+    **전부**에 들어간다 — 검토 중인 것 먼저, 나머지는 최근 것부터. 조리법이
+    비어 있으면 안 돈다(끝난 회차를 그대로 둔다).
+  {% endcomment %}
+  <p class="dim" style="font-size:12px;margin:2px 0 10px">
+    NAS 에 새 슬라이드가 올라오면 폴러가 이 순서대로 채웁니다.
+    <b>조리법이 비어 있는 묶음은 돌지 않습니다</b> — 끝난 회차는 그대로 둡니다.
+  </p>
+  {% if plan %}
+  <table class="mtab">
+    <thead><tr><th>순서</th><th>묶음</th><th>상태</th><th>인자</th><th></th></tr></thead>
+    <tbody>
+      {% for r in plan %}
+      <tr{% if r.batch.for_review %} class="nowrow"{% endif %}>
+        <td class="num">{{ forloop.counter }}</td>
+        <td>{{ r.batch.label }}
+          {% if r.batch.for_review %}<span class="nowtag">검토 중</span>{% endif %}</td>
+        <td>{% if r.ready %}<span class="badge on">돌 수 있음</span>
+            {% else %}<span class="badge warn">못 돌림</span>{% endif %}</td>
+        <td class="mono" style="font-size:11.5px">{{ r.args }}
+          {% if not r.ready %}<div class="dim">{{ r.why }}</div>{% endif %}
+          {% if r.recipe.weights_guessed %}
+            <div class="dim">가중치는 이행이 추측한 값입니다 — 확인하십시오</div>
+          {% endif %}
+        </td>
+        <td><a href="#recipe-{{ r.batch.pk }}">조리법</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="dim">조리법이 적힌 묶음이 없습니다 — 새 자료가 들어와도 아무 묶음도
+     안 채워집니다. 아래에서 적어 주십시오.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>새 묶음</h2>
+  {% comment %}
+    **묶음을 미리 만들 수 있어야 한다** (DiaRUGA 084). 지금까지는 파이프라인이
+    `--batch` 로 처음 쓸 때 생겨서, "다음 회차를 이렇게 돌리겠다" 를 적어 둘
+    수가 없었다 — 조리법을 적으려면 묶음이 먼저 있어야 하는데 묶음을 만들려면
+    검출을 한 번 돌려야 했다.
+
+    **만드는 것으로 자료가 생기지는 않는다.** 그 말을 화면에 적는다.
+  {% endcomment %}
+  <form method="post" class="newbatch">
+    {% csrf_token %}
+    <input type="hidden" name="act" value="new_batch">
+    <label>이름
+      <input type="text" name="label" required placeholder="yolo-seed"
+             pattern="[^/?#]+" title="주소에 쓸 수 없는 글자는 빼 주십시오"></label>
+    <label>조리법을 베껴 올 묶음
+      <select name="copy_from">
+        <option value="">— 안 베낀다 —</option>
+        {% for b in batches_all %}{% if b.recipe %}
+        <option value="{{ b.pk }}">{{ b.label }}</option>
+        {% endif %}{% endfor %}
+      </select></label>
+    <label>카탈로그 코드
+      <input type="text" name="code" maxlength="8" size="6" placeholder="비우면 이름에서"></label>
+    <label class="wide">메모
+      <input type="text" name="note" placeholder="무엇을 바꿔 돌리는 회차인가"></label>
+    <button type="submit">만들기</button>
+  </form>
+  <p class="dim" style="font-size:12px;margin:10px 0 0">
+    만들면 <b>새 슬라이드부터</b> 폴러가 채웁니다.
+    <b>이미 있는 슬라이드는 한 번 손으로 돌려야 합니다</b> — 몇 시간짜리 GPU
+    작업이라 화면이 조용히 시작하지 않습니다.
+  </p>
+  <pre class="cmd">docker compose run --rm pipeline python segment_forams.py \
+    --slide &lt;슬러그&gt; --batch &lt;묶음&gt; &lt;위 표의 인자&gt;</pre>
+</section>
+
+<section class="panel">
+  <h2>조리법</h2>
+  <p class="dim" style="font-size:12px;margin:2px 0 10px">
+    묶음마다 <b>어떻게 검출할지</b>를 적어 둡니다 (<span class="mono">segment_forams.py</span> 의 인자).
+    비우면 그 묶음은 자동으로 안 돕니다.
+  </p>
+  {% for b in batches_all %}
+  <form method="post" class="recipe" id="recipe-{{ b.pk }}">
+    {% csrf_token %}
+    <input type="hidden" name="act" value="recipe">
+    <input type="hidden" name="batch" value="{{ b.pk }}">
+    <div class="rhead">{{ b.label }}
+      {% if b.for_review %}<span class="nowtag">검토 중</span>{% endif %}
+      <span class="dim">검출 {{ b.n_detections }}</span></div>
+    <div class="rgrid">
+      <label>엔진
+        <select name="backend">
+          <option value="">— 안 돌림 —</option>
+          {% for k in backends %}
+          <option value="{{ k }}"{% if b.recipe.backend == k %} selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select></label>
+      <label>가중치 <span class="dim">(YOLO)</span>
+        <input type="text" name="weights" value="{{ b.recipe.weights|default:'' }}"
+               placeholder="models/11n-synth-v2-1024.pt"></label>
+      <label>배율 <input type="text" name="scale" value="{{ b.recipe.scale|default:'1.0' }}"></label>
+      <label>최소 µm <input type="text" name="min_um" value="{{ b.recipe.min_um|default:'63' }}"></label>
+      <label>최대 µm <input type="text" name="max_um" value="{{ b.recipe.max_um|default:'2000' }}"></label>
+      <label>확신도 하한 <input type="text" name="conf_min" value="{{ b.recipe.conf_min|default:'0.25' }}"></label>
+      <label>YOLO conf <span class="dim">(뽑는 하한)</span> <input type="text" name="yolo_conf" value="{{ b.recipe.yolo_conf|default:'0.01' }}"></label>
+      <label>YOLO imgsz <input type="text" name="yolo_imgsz" value="{{ b.recipe.yolo_imgsz|default:'1024' }}"></label>
+      <label class="ck"><input type="checkbox" name="all_images"
+             {% if b.recipe.all_images %}checked{% endif %}> 합성본 + 프레임 전부</label>
+    </div>
+    <div class="rfoot">
+      <button type="submit">저장</button>
+      <span class="dim">엔진을 <b>안 돌림</b> 으로 두면 조리법이 비워집니다.</span>
+    </div>
+  </form>
+  {% endfor %}
+</section>
+
+<style>
+  .newbatch { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .newbatch label { display: flex; flex-direction: column; gap: 4px;
+                    font-size: 12px; color: var(--dim); }
+  .newbatch label.wide { flex: 1 1 240px; }
+  .newbatch input[type=text], .newbatch select {
+    background: var(--field-bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; }
+  .cmd { background: var(--field-bg); border: 1px solid var(--line);
+         border-radius: 7px; padding: 10px 12px; font-size: 12.5px;
+         overflow-x: auto; margin: 10px 0 0; }
+  .recipe { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+            margin-bottom: 12px; background: var(--panel); }
+  .recipe .rhead { font-weight: 650; margin-bottom: 10px; display: flex;
+                   align-items: center; gap: 8px; }
+  .recipe .rgrid { display: grid; gap: 10px;
+                   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .recipe label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+                  color: var(--dim); }
+  .recipe label.ck { flex-direction: row; align-items: center; gap: 6px; }
+  .recipe input[type=text], .recipe select {
+    background: var(--field-bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; }
+  .recipe .rfoot { margin-top: 12px; display: flex; align-items: center; gap: 10px;
+                   font-size: 12px; }
+  /* 카탈로그 코드 칸 — 표 안의 작은 폼. 비어 있으면 경고색 테두리 */
+  .mtab input.code { width: 5.5em; font: inherit; font-size: 12.5px; padding: 2px 6px;
+                     background: var(--field-bg); color: var(--fg);
+                     border: 1px solid var(--line); border-radius: 5px; text-transform: uppercase; }
+  .mtab input.code.missing { border-color: var(--warn); }
+  .mtab form.inline button { font: inherit; font-size: 11.5px; padding: 2px 7px; cursor: pointer;
+                             background: var(--panel); color: inherit;
+                             border: 1px solid var(--line); border-radius: 5px; }
+</style>
+{% endblock %}

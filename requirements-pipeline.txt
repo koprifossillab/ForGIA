@@ -1,0 +1,30 @@
+# 파이프라인(그룹핑·합성·검출·분류)이 뷰어보다 더 쓰는 것.
+# 컨테이너 pipeline 이미지가 web 이미지 위에 이 파일을 얹어 만들어진다.
+#
+# CUDA 휠은 기본 PyPI에 없으므로 torch/torchvision은 아래 인덱스에서 받는다.
+#   pip install -r requirements-pipeline.txt --extra-index-url https://download.pytorch.org/whl/cu126
+#
+# CUDA 12.6 기준. 드라이버가 더 낮으면 cu121 등으로 바꾸고, CPU만 쓸 경우
+# --extra-index-url 없이 설치하면 CPU 휠이 잡힌다 (매우 느림).
+#
+# **SAM2 가 없다** (P01 5절). DiaRUGA 는 첫 가중치가 없어 SAM2 로 시작했지만
+# ForGIA 는 합성 자료로 YOLO 를 먼저 굽는다 — hydra·omegaconf·iopath·
+# huggingface_hub 도 그래서 안 들어온다.
+
+# refilter.py 가 Django ORM 을 쓴다.
+-r requirements-web.txt
+
+torch==2.13.0
+torchvision==0.28.0
+
+# 이미지 입출력, 초점 시리즈 그룹핑, focus stacking
+numpy==2.4.4
+opencv-python-headless==5.0.0.93
+tqdm==4.70.0
+
+# 분류기 런타임 (4단계). 학습 프레임워크와 런타임을 가른다 — DiaRUGA P27 의
+# miso-onnx 방식. 뷰어 쪽에는 안 들어간다.
+onnxruntime-gpu==1.30.0
+
+# YOLO 백엔드는 requirements-yolo.txt 에 따로 있다 — `--no-deps` 로 넣어야 해서
+# 한 파일에 섞을 수 없다. deploy/Dockerfile.pipeline 이 둘 다 설치한다.

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/host/sync_test_to_srv.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 저장소의 **테스트 배포** 파일을 /srv/ForGIA/test 로 옮긴다 (085).
 # 운영 쪽은 `sync_to_srv.sh` 다 — 같은 갈래이고 같은 규칙이다.
 #

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA v0.29.0 deploy/host/dbrun.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # DB 를 만지는 스크립트를 **컨테이너 안에서** 돌린다.
 #
 #   deploy/host/dbrun.sh check_db.py

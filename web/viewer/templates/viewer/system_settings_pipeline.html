@@ -1,0 +1,109 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  DiaRUGA v0.29.0 `system_settings_pipeline.html` 에서 왔다.
+{% endcomment %}
+{% load viewer_extras %}
+{% block title %}시스템 설정 · 파이프라인 — ForGIA{% endblock %}
+{% block subtitle %}<b>시스템 설정</b> · 파이프라인{% endblock %}
+{% block content %}
+{% include "viewer/_system_settings_nav.html" with here="pipeline" preview_url=preview_url only %}
+
+{% comment %}
+  폴러가 살아 있는가를 사람이 보는 자리 (098). 097(사흘) · 026(4시간 반) 두 번
+  다 "멈춘 것을 아무도 안 알려 줘서" 늦었다 — 뷰어는 늘 열려 있으니 여기가
+  그 자리다. 해석은 화면이 먼저 한다: 경고 줄이 맨 위다.
+{% endcomment %}
+
+{% for w in p.warnings %}
+  <div class="errbar">⚠ {{ w }}</div>
+{% endfor %}
+
+<h3 style="margin-top:6px">정찰 — 폴러가 살아 있는가</h3>
+<p class="dim" style="font-size:12.5px">
+  {% if p.scan.exists %}
+    마지막 정찰 <b style="color:var(--fg)">{{ p.scan.age_min }}분 전</b>
+    (cron 이 1분마다 돈다 — 5분을 넘으면 위에 경고가 뜬다)
+    {% if p.scan.error %}<br><span style="color:var(--danger)">정찰 파일을 읽지 못했다: {{ p.scan.error }}</span>{% endif %}
+  {% else %}
+    정찰 기록이 없다 — 폴러가 이 자리(<code class="mono">logs/last_scan.json</code>)에
+    아직 아무것도 안 적었다. 운영이라면 폴러가 한 번도 안 돈 것이고,
+    개발 서버라면 정상이다.
+  {% endif %}
+</p>
+
+{% if p.scan.slides %}
+<table class="mtab" style="max-width:640px">
+  <thead><tr><th>NAS 폴더</th><th>상태</th><th class="num">사진</th><th class="num">안정(분)</th></tr></thead>
+  <tbody>
+  {% for r in p.scan.slides %}
+    <tr>
+      <td class="mono" style="font-size:12px">{{ r.rel }}</td>
+      {% comment %} new = 아직 안 가져온 것 — 그것만 도드라지면 된다 {% endcomment %}
+      <td>{% if r.state == "new" %}<span class="badge warn">새것 — 반입 대기</span>
+          {% else %}<span class="dim">{{ r.state }}</span>{% endif %}</td>
+      <td class="num">{{ r.jpgs }}</td>
+      <td class="num">{{ r.stable_min }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h3>끝나지 않은 슬라이드</h3>
+{% if p.busy %}
+<table class="mtab" style="max-width:860px">
+  <thead><tr><th>슬라이드</th><th>상태</th><th>어디까지 왔나</th><th>파이프라인의 말</th></tr></thead>
+  <tbody>
+  {% for b in p.busy %}
+    <tr>
+      <td><a href="{% url 'dataset' b.slug %}">{{ b.name }}</a></td>
+      <td>{% if b.state == "failed" %}<span class="badge done">failed — 사람이 볼 것</span>
+          {% else %}<span class="badge on">{{ b.state }}</span>{% endif %}</td>
+      {% comment %}
+        진행을 단계 순서대로 — 사진이 왔고, 시야로 묶였고, 합성됐고, 검출됐다.
+        pending 은 "사진만 온" 상태라 시야 0 이 정상이다.
+      {% endcomment %}
+      <td class="mono" style="font-size:12px">
+        사진 {{ b.n_frames }} · 시야 {{ b.n_vps }} · 합성 {{ b.n_stacks }}/{{ b.n_vps }} ·
+        검출 {{ b.n_det_vps }}/{{ b.n_vps }}</td>
+      <td class="dim" style="font-size:12px">{{ b.note|default:"—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="dim">없다 — 슬라이드가 전부 <code class="mono">done</code> 이다.</p>
+{% endif %}
+
+<h3>최근 실행</h3>
+{% if p.runs %}
+<table class="mtab" style="max-width:860px">
+  <thead><tr><th>시작</th><th>종류</th><th>슬라이드</th><th>묶음</th><th>상태</th><th class="num">분</th></tr></thead>
+  <tbody>
+  {% for r in p.runs %}
+    <tr>
+      <td class="mono" style="font-size:12px">{{ r.started_at|date:"m-d H:i" }}</td>
+      <td>{{ r.kind }}</td>
+      <td class="mono" style="font-size:12px">{{ r.slide|default:"—" }}</td>
+      <td>{{ r.batch|default:"—" }}</td>
+      <td>{% if r.status == "running" %}<span class="badge on">도는 중</span>
+          {% elif r.status == "failed" %}<span class="badge done">failed</span>
+          {% elif r.status == "partial" %}<span class="badge warn">partial</span>
+          {% else %}<span class="dim">{{ r.status }}</span>{% endif %}
+          {% if r.error %}<div class="dim" style="font-size:11px">{{ r.error|truncatechars:90 }}</div>{% endif %}</td>
+      <td class="num">{{ r.minutes|default_if_none:"—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="dim">실행 기록이 없다.</p>
+{% endif %}
+
+<p class="dim" style="font-size:12px; margin-top:14px">
+  이 화면은 읽기만 한다. 파이프라인을 손으로 돌리는 법은
+  <code class="mono">CLAUDE.md</code> 의 "파이프라인 (GPU)" — 평소에는 폴러가
+  1분마다 알아서 돈다. <code class="mono">failed</code> 는 폴러가 일부러 안
+  건드리는 상태다: 그룹핑이 스스로 의심스러워 세운 것이라 사람이 판단해야 한다.
+</p>
+{% endblock %}

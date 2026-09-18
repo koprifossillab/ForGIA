@@ -1,11 +1,11 @@
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/Dockerfile.pipeline — 이름·경로·포트만 바꿨다 (P01 §3.1)
-# ForGIA 파이프라인 이미지 (P03) — 그룹핑·합성·YOLO 검출·문턱 적용. SAM2 는 안 온다 (P01 §6).
+# ForGIA 파이프라인 이미지 — 그룹핑·합성·YOLO 검출·분류·문턱 적용.
+# DiaRUGA v0.29.0 `deploy/Dockerfile.pipeline` 에서 왔다 — SAM2(git 의존·HF 볼륨)를 뺐다.
 #
 # CUDA 툴킷을 깔지 않는다 — torch cu126 휠이 CUDA 런타임을 들고 있고, 드라이버는
 # nvidia 컨테이너 런타임이 호스트에서 넣어 준다. 그래서 slim 베이스로 충분하다.
 #
 # 이 컨테이너는 상주하지 않는다. `docker compose run --rm` 으로 일회성으로 돌린다 —
-# 상주시키면 PyTorch 캐싱 할당자가 최대치 VRAM 을 물고 놓지 않는다 (P03 "버린 선택지").
+# 상주시키면 PyTorch 캐싱 할당자가 최대치 VRAM 을 물고 놓지 않는다 (DiaRUGA P03 "버린 선택지").
 #
 # **forgia-base 를 FROM 하지 않는다.** 그렇게 했더니 코드 한 줄만 고쳐도 base 의
 # COPY 층이 바뀌면서 그 위의 pip 층(6 GB, 10분)이 통째로 다시 깔렸다. 의존성을
@@ -24,10 +24,9 @@ WORKDIR /app
 # 비어 있으면(망 밖) update-ca-certificates 가 그냥 넘어간다.
 COPY deploy/ca/ /usr/local/share/ca-certificates/
 
-# SAM-2 를 git 에서 받는다 (requirements-pipeline.txt). 컴파일 확장은 없어서
-# 빌드 도구는 필요 없다 — git 하나면 된다.
+# git 의존이 없다(SAM2 를 안 쓴다) — CA 만 깐다.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -57,9 +56,9 @@ RUN pip install -r requirements-pipeline.txt \
  && python -c "import cv2, torch, ultralytics; \
       print('cv2', cv2.__version__, '· torch', torch.__version__, \
             '· ultralytics', ultralytics.__version__)" \
- && rm -rf /tmp/Ultralytics /tmp/.ultralytics /tmp/.cache \
- && apt-get purge -y git && apt-get autoremove -y
+ && rm -rf /tmp/Ultralytics /tmp/.ultralytics /tmp/.cache
 
+# 검출·분류 가중치는 /data3/ForGIA/models 에 파일로 둔다 (2·4단계) — 이미지에 안 굽는다.
 ENV HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     # ultralytics 는 설정·캐시를 여기 쓴다. 안 잡으면 /app 아래를 시도했다가

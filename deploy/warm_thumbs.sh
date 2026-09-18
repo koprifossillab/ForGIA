@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA v0.29.0 deploy/warm_thumbs.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 새로 들어온 슬라이드의 축소본을 미리 굽는다 (P03 5단계 뒤 · poll_nas.sh 가 부른다).
 #
 #   warm_thumbs.sh <slug> [<slug>…]

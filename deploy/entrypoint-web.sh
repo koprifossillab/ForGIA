@@ -1,5 +1,4 @@
 #!/bin/bash
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/entrypoint-web.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 뷰어 컨테이너 시작 (P03).
 set -e
 

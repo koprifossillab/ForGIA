@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/host/dbsync.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 저장소의 스크립트를 /srv/ForGIA/scripts 로 옮겨 놓는다.
 #
 #   deploy/host/dbsync.sh check_db.py backup_db.py

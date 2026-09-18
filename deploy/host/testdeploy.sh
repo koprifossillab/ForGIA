@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# from DiaRUGA 34bdf21 (v0.20.0-3) deploy/host/testdeploy.sh — 이름·경로·포트만 바꿨다 (P01 §3.1)
 # 판을 **테스트 자리**(/ForGIATest/)에 건다 (085).
 #
 #   deploy/host/testdeploy.sh v0.8.3
@@ -67,11 +66,11 @@ test_script=$(grep -oP '^FORGIA_SCRIPT_NAME=\K.*' "$TEST_SRV/.env" || true)
 
 [ -n "$test_db" ] || die "테스트 .env 에 FORGIA_DB 가 없다"
 [ "$test_db" != "$prod_db" ] || die "테스트가 **운영 DB** 를 가리킨다: $test_db
-   사람의 교정은 재생성 불가다. .env 를 고칠 것"
+   교정은 재생성 불가다. .env 를 고칠 것"
 [ "$test_script" != "/ForGIA" ] || die "FORGIA_SCRIPT_NAME 이 /ForGIA 다 — 링크가 전부 운영으로 샌다"
 grep -q '^ *- */srv/ForGIA/db:' "$TEST_SRV/docker-compose.yml" &&
     die "테스트 compose 가 **운영 db/ 를 마운트**한다 — 지울 것"
-say "안전 검사 통과 (DB·노두 사진·서브경로가 운영과 갈라져 있다)"
+say "안전 검사 통과 (DB·서브경로가 운영과 갈라져 있다)"
 
 # --- 2) 이미지. 받다 실패하면 지금 도는 것을 안 건드리고 끝난다 -----------
 if [ "$PULL" = 1 ]; then
@@ -120,6 +119,7 @@ fresh|snapshot)
     say "DB 사본: $(basename "$src") (${age_min}분 전)"
     ;;
 esac
+
 
 # --- 6) 올리고 기동 게이트 ------------------------------------------------
 (cd "$TEST_SRV" && docker compose up -d web)

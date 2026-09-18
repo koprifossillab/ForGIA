@@ -1,0 +1,89 @@
+{% extends "viewer/base.html" %}
+{% comment %}
+  시스템 설정 · 학명 (ForGIA 3단계). DiaRUGA 에는 없는 화면이다 — 그쪽은 종명이
+  자유 문자열이라 관리할 목록이 없었다. 여기서는 `Taxon` 표(WoRMS 반입)가 있고
+  **자동완성은 켠 것만 낸다** (P01 5절). 켜는 길은 둘 — 동정에 한 번 쓰이면 저절로
+  (`data.resolve_taxon`), 아니면 여기서 이름으로.
+
+  반입 자체는 `migrate/import_worms.py` 가 한다 — 화면에서 안 돌린다 (수만 행 ·
+  WoRMS REST 를 수천 번 부르는 일이라 폴러와 같은 자리가 아니다).
+{% endcomment %}
+{% block title %}시스템 설정 · 학명 — ForGIA{% endblock %}
+{% block subtitle %}<b>시스템 설정</b> · 학명{% endblock %}
+{% block content %}
+{% include "viewer/_system_settings_nav.html" with here="taxa" preview_url=preview_url only %}
+
+{% if msg %}<div class="{% if ok %}okbar{% else %}errbar{% endif %}">{{ msg }}</div>{% endif %}
+
+<p class="dim" style="font-size:12.5px;margin:0 0 12px">
+  반입 {{ stats.total }}행 (속 {{ stats.genus }} · 종 {{ stats.species }}) ·
+  켠 것 {{ stats.active }} · 동정에 쓰인 것 {{ stats.used }}
+  {% if not stats.total %} — <b>아직 반입 전이다.</b> <code>python migrate/import_worms.py</code> 를 돌린다{% endif %}
+</p>
+
+<form method="get" class="taxfind">
+  <input type="search" name="q" value="{{ q }}" placeholder="학명 앞부분 · 비우면 켠 것만" autofocus>
+  <button type="submit">찾기</button>
+  {% if q %}<a href="{% url 'system_settings_taxa' %}">켠 것만</a>{% endif %}
+</form>
+
+<form method="post" class="taxon-name">{% csrf_token %}
+  <input type="hidden" name="act" value="on_name">
+  <input type="text" name="name" placeholder="이름으로 켜기 — Globigerina bulloides" maxlength="160">
+  <button type="submit">켜기</button>
+  <span class="dim">목록에 없는 이름은 거절한다 — 오기이거나 반입이 안 된 것</span>
+</form>
+
+<table class="taxa">
+  <thead><tr><th>학명</th><th>급</th><th>상태</th><th>생활형</th><th>WoRMS</th><th></th></tr></thead>
+  <tbody>
+  {% for t in rows %}
+    <tr class="{% if t.active %}on{% endif %}">
+      <td><i>{{ t.name }}</i>{% if t.authority %} <span class="dim">{{ t.authority }}</span>{% endif %}
+          {% if t.accepted_id %}<span class="dim"> → <i>{{ t.accepted.name }}</i></span>{% endif %}
+          {% if t.extinct %}<span class="badge">화석</span>{% endif %}</td>
+      <td>{{ t.rank }}</td>
+      <td>{{ t.status }}</td>
+      <td>
+        <form method="post" class="inline">{% csrf_token %}
+          <input type="hidden" name="act" value="habit"><input type="hidden" name="id" value="{{ t.pk }}">
+          <select name="habit" onchange="this.form.submit()"
+                  title="아래 급 전부에 물려준다 — 과·목에 붙이면 그 밑 종이 다 받는다">
+            {% for k, v in habits %}<option value="{{ k }}"{% if t.habit == k %} selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+      <td>{% if t.aphia_id %}<a href="{{ t.worms_url }}" target="_blank" rel="noopener">{{ t.aphia_id }}</a>{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td>
+        <form method="post" class="inline">{% csrf_token %}
+          <input type="hidden" name="act" value="{% if t.active %}off{% else %}on{% endif %}">
+          <input type="hidden" name="id" value="{{ t.pk }}">
+          <button type="submit">{% if t.active %}끄기{% else %}켜기{% endif %}</button>
+        </form>
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="dim">{% if q %}“{{ q }}” 로 찾은 학명이 없다{% else %}켠 학명이 없다 — 동정에 쓰면 저절로 켜진다{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if total > shown %}<p class="dim">{{ total }}개 중 앞 {{ shown }}개만 — 더 좁혀서 찾는다</p>{% endif %}
+{% endblock %}
+
+{% block style %}
+  .taxfind, .taxon-name { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 13px; }
+  .taxfind input, .taxon-name input[type=text] {
+    font: inherit; padding: 4px 8px; background: var(--field-bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 6px; min-width: 280px;
+  }
+  .taxfind button, .taxon-name button, .taxa button {
+    font: inherit; font-size: 12.5px; padding: 3px 10px; cursor: pointer;
+    background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 6px;
+  }
+  .taxa { border-collapse: collapse; font-size: 13px; width: 100%; }
+  .taxa th, .taxa td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .taxa tr.on td:first-child { border-left: 3px solid var(--accent); }
+  .taxa .badge { margin-left: 6px; }
+  .taxa form.inline { display: inline; }
+  .taxa select { font: inherit; font-size: 12px; background: var(--field-bg); color: var(--fg); border: 1px solid var(--line); border-radius: 5px; }
+{% endblock %}

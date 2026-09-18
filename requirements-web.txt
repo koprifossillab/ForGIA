@@ -1,0 +1,10 @@
+# 뷰어(Django)가 쓰는 것만. 컨테이너 web 이미지가 이 파일로 만들어진다.
+# DiaRUGA v0.29.0 requirements-web.txt 와 같다.
+#
+# torch·opencv·numpy 가 여기 없는 것은 실수가 아니다 — 뷰어는 그것들을 쓰지
+# 않는다. 판정 규칙 judge.py 는 import 가 하나도 없고, web/ 전체가 Django 와
+# PIL 만 쓴다. 이 경계가 뷰어 이미지를 200 MB 대로 유지한다.
+
+Django==5.2.16
+pillow==12.2.0        # 썸네일·크롭 (web/viewer/views.py)
+gunicorn==26.0.0      # 운영 서빙. 개발용 runserver 를 대신한다
