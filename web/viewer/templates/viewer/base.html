@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}ForGIA{% endblock %}</title>
+{% comment %}
+  DiaRUGA v0.29.0 `base.html`(2,261줄)에서 껍데기만 가져왔다 — 테마 스크립트 ·
+  색 토큰 · 머리줄 · 워터마크 둘 · 테마 단추. 화면마다의 CSS(카드·표·검토
+  화면)는 그 화면이 오는 단계에서 같이 온다.
+
+  **테마를 스타일보다 먼저 정한다** (DiaRUGA 201). `localStorage` 의
+  `forgia.theme`(`light`·`dark`, 없으면 시스템)을 읽어 `<html data-theme>` 에
+  붙이고, CSS 는 그 속성만 본다. 이 스크립트가 `<style>` 뒤에 오면 첫 그림이
+  어두운 색으로 한 번 그려졌다가 바뀐다 — 그래서 여기다.
+{% endcomment %}
+<script>
+(function () {
+  var KEY = 'forgia.theme', root = document.documentElement,
+      mq = window.matchMedia('(prefers-color-scheme: light)');
+  function saved() {
+    try { var v = localStorage.getItem(KEY); return v === 'light' || v === 'dark' ? v : ''; }
+    catch (e) { return ''; }
+  }
+  function apply() {
+    var pick = saved();
+    root.dataset.theme = pick || (mq.matches ? 'light' : 'dark');
+    root.dataset.themePick = pick || 'system';
+  }
+  apply();
+  if (mq.addEventListener) mq.addEventListener('change', apply); else mq.addListener(apply);
+  // 머리줄 단추가 부른다. 시스템 → 밝게 → 어둡게 → 시스템
+  window.forgiaTheme = {
+    pick: function () { return root.dataset.themePick; },
+    cycle: function () {
+      var next = {system: 'light', light: 'dark', dark: ''}[root.dataset.themePick];
+      try { if (next) localStorage.setItem(KEY, next); else localStorage.removeItem(KEY); }
+      catch (e) { /* 사생활 모드 — 이 화면에서만 바뀐다 */ root.dataset.theme = next || (mq.matches ? 'light' : 'dark'); root.dataset.themePick = next || 'system'; return; }
+      apply();
+    }
+  };
+})();
+</script>
+{% comment %}
+  탭 아이콘. 부유성 마크를 data URI 로 심는다 — 파일로 두면 정적 파일을 내보내는
+  길이 필요한데 이 배포에는 없다. **16 px 에서는 가시가 뭉갠다** — 방 여섯과
+  가시 넷만 남겼다. 색은 로고 원본의 연보라 그대로 고정이다: 탭에는 물려받을
+  색이 없다.
+{% endcomment %}
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-70 -52 118 112'%3E%3Cg fill='none' stroke='%23c4b5fd' stroke-width='9' stroke-linecap='round'%3E%3Ccircle cx='20' cy='12' r='11'/%3E%3Ccircle cx='10' cy='26' r='13'/%3E%3Ccircle cx='-14' cy='28' r='16'/%3E%3Ccircle cx='-30' cy='10' r='19'/%3E%3Ccircle cx='-20' cy='-14' r='22'/%3E%3Ccircle r='26'/%3E%3Cpath d='M26 0H42M-49 10H-65M-31 -33-40 -48M13.8 38.5 18 54'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  /* 색 토큰. **연보라가 강조색이다** (사용자 2026-09-18) — 로고 원본의 `#c4b5fd`
+     를 어두운 쪽 `--accent` 로 그대로 쓰고, 밝은 쪽은 흰 바탕에서 읽히게 더
+     진한 보라를 준다. 나머지 이름은 DiaRUGA 와 같다 — 화면 CSS 를 옮겨 올 때
+     토큰 이름이 같아야 그대로 붙는다. */
+  :root {
+    --bg: #0f0e15; --panel: #17151f; --line: #27243a;
+    --fg: #e8e6f2; --dim: #9691ab; --accent: #c4b5fd; --warn: #ffb454;
+    --good: #7ee787; --danger: #ff6b6b;
+    /* 알림 배너 — 밝은 화면에서도 읽히도록 테마마다 따로 준다. */
+    --ok-bg: #14361f;   --ok-fg: #c9f5d8;   --ok-line: #2c6b41;
+    --err-bg: #4a1d1d;  --err-fg: #ffd9d9;  --err-line: #7d2f2f;
+    --warn-bg: #4a3a12; --warn-fg: #ffe9b8; --warn-line: #7d6222;
+    /* 입력칸. 패널보다 살짝 눌러 앉은 면 */
+    --field-bg: #0c0b11;
+    /* 배경 워터마크의 진하기. **테마마다 따로 준다** — 어두운 바탕에 얹는 밝은
+       획과 밝은 바탕에 얹는 어두운 획은 같은 알파로 같게 안 보인다. */
+    --wm-op: .05;
+    /* 자리 이름 워터마크(.envwm)의 진하기. 저것은 바탕이고 이것은 경고라 크다. */
+    --envwm-op: .17;
+    /* 묶음 머리줄의 옅은 면. 뜻 있는 색(`--accent` 등)을 빌리지 않는 중립 면 */
+    --group-bg: #1e1b29; --group-bg-hi: #262234;
+  }
+  /* 어두운 값이 기본이고 밝은 값은 `data-theme="light"` 가 켠다. **미디어 쿼리가
+     아니다** — 여기 미디어 쿼리를 되살리면 화면에서 고른 것을 OS 가 덮는다. */
+  :root { color-scheme: dark; }
+  :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f7f5fb; --panel: #fff; --line: #e3dff0;
+      --fg: #1f1b2e; --dim: #6f6a85; --accent: #6d4fc2; --warn: #b45309;
+      --good: #15803d; --danger: #dc2626;
+      --ok-bg: #e8f7ee;   --ok-fg: #14532d;  --ok-line: #a7d9bb;
+      --err-bg: #fdecec;  --err-fg: #7f1d1d; --err-line: #f0b4b4;
+      --warn-bg: #fdf3e0; --warn-fg: #7c4a03; --warn-line: #e8c98a;
+      --field-bg: #fff;
+      --wm-op: .07;
+      --envwm-op: .14;
+      --group-bg: #eeeaf7; --group-bg-hi: #e4dff1;
+  }
+  * { box-sizing: border-box; }
+  ::placeholder { color: var(--dim); opacity: .5; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.55 ui-sans-serif, system-ui, "Noto Sans KR", sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header {
+    padding: 11px 16px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+  }
+  header h1 { font-size: 13.5px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header h1 a { display: inline-flex; align-items: center; gap: 7px; color: inherit; }
+  header h1 a:hover { text-decoration: none; }
+  header h1 a:hover .wordmark { text-decoration: underline; }
+  /* 마크는 글자보다 조금 크게 — 같은 높이면 글자에 눌려 점처럼 보인다.
+     색은 강조색이다 — 로고 원본이 그 색이고, 밝은 테마에서도 `--accent` 가
+     그 자리에 맞는 보라를 준다. */
+  .logomark { width: 22px; height: 22px; flex: 0 0 auto; display: block; color: var(--accent); }
+  /* 워드마크는 SVG 가 아니라 글자다 (`_logo.html` 머리말).
+     **`text-transform` 을 여기 얹지 말 것**: ForGIA 의 대소문자가 곧 약자다. */
+  .wordmark { font-weight: 800; letter-spacing: .3px; }
+  header h1 .ver { margin-left: 10px; font-weight: 500; color: var(--dim); font-size: 12px; }
+
+  /* --- 배경 워터마크 --- 페이지 뒤에 로고를 아주 옅게 깐다. 원본 로고의 구성
+     그대로 — 저서성 사슬이 뒤에, 마크와 워드마크가 앞에. `z-index: -1` 이라
+     카드·표가 덮는다. 검토 화면은 사진 뒤로 아무것도 새지 않게 그쪽이 막는다. */
+  .watermark {
+    position: fixed; inset: 0; z-index: -1;
+    display: flex; align-items: center; justify-content: center; gap: 3vmin;
+    pointer-events: none;
+    color: var(--fg); opacity: var(--wm-op);
+  }
+  .watermark .logomark { width: min(30vmin, 260px); height: auto; color: inherit; }
+  .watermark .wordmark {
+    font-size: min(13vmin, 110px); line-height: 1;
+    letter-spacing: .04em; white-space: nowrap; position: relative;
+  }
+  /* 사슬은 워드마크 뒤에 깔린다 — 원본에서 글자 오른쪽 아래로 흐른다 */
+  .watermark .benthic {
+    position: absolute; left: 22%; top: -35%; width: 120%; height: auto;
+    z-index: -1; opacity: .6;
+  }
+
+  /* 자리 이름 워터마크 — **여기가 운영이 아니라는 것**을 화면 전체에 알린다.
+     `FORGIA_ENV_LABEL` 이 있을 때만 나온다 (viewer/context.py 머리말).
+     로고와 자리가 반대다 — 글 위에 얹는다. 오래 머무는 검토 화면에서 보여야 한다. */
+  .envwm {
+    position: fixed; inset: 0; z-index: 9000;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; overflow: hidden;
+  }
+  .envwm span {
+    transform: rotate(-30deg);
+    font-size: min(15vmin, 180px); font-weight: 800; line-height: 1;
+    letter-spacing: .08em; white-space: nowrap;
+    color: var(--danger); opacity: var(--envwm-op);
+  }
+
+  header .sub { font-size: 13px; color: var(--dim); min-width: 0; }
+  header .sub b { color: var(--fg); font-weight: 650; }
+  header nav { margin-left: auto; display: flex; gap: 14px; font-size: 13px; align-items: center; }
+  /* 테마 단추 — 세 아이콘을 다 싣고 `data-theme-pick` 이 하나만 보인다 */
+  .themebtn {
+    align-self: center; display: inline-flex; margin-left: 12px; padding: 4px;
+    border: 0; border-radius: 7px; background: none; color: var(--dim); cursor: pointer;
+  }
+  .themebtn svg { width: 17px; height: 17px; display: none; }
+  .themebtn:hover { color: var(--accent); background: var(--bg); }
+  :root[data-theme-pick="system"] .themebtn .ic-system,
+  :root[data-theme-pick="light"] .themebtn .ic-light,
+  :root[data-theme-pick="dark"] .themebtn .ic-dark { display: block; }
+  /* nav 가 없는 화면에서는 이것이 오른쪽으로 가야 한다 */
+  header h1 + .sub + .themebtn, header .sub + .themebtn { margin-left: auto; }
+  main { padding: 5px 18px 22px; max-width: 1500px; margin: 0 auto; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  .dim { color: var(--dim); }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .crumb { font-size: 13px; margin-bottom: 14px; }
+  {% block style %}{% endblock %}
+</style>
+<script>
+  // 서브경로 배포(/ForGIA/)를 위한 뿌리. url 태그는 FORCE_SCRIPT_NAME 을 알아서
+  // 붙이지만 JS 안에서 손으로 잇는 경로는 그러지 못한다 — 그래서 여기서 한 번
+  // 뽑아 둔다. 뿌리에 붙어 있으면 '', 서브경로면 '/ForGIA' 이 된다.
+  // 태그 이름을 주석에 그대로 적지 말 것 — Django 는 JS 주석 안이어도 태그로 읽는다.
+  window.ROOT = '{% url "index" %}'.replace(/\/$/, '');
+</script>
+</head>
+<body>
+{% comment %}
+  ForGIA = **For**aminifera **G**enus-level **I**dentification **A**I 로 읽는다 —
+  DiaRUGA(Diatom Refocusing Using Genus-level AI)와 같은 꼴이다. 화면에는
+  풀어 쓰지 않는다. **표기는 `ForGIA` 하나뿐이다** — 대문자 자리가 곧 약자의
+  자리라 `Forgia`·`FORGIA` 로 쓰지 않는다.
+{% endcomment %}
+<div class="watermark" aria-hidden="true">{% include "viewer/_logo.html" %}<span class="wordmark">{% include "viewer/_logo_benthic.html" %}ForGIA</span></div>
+{% if env_label %}<div class="envwm"><span>{{ env_label }}</span></div>{% endif %}
+<header>
+  <h1><a href="{% url 'index' %}">{% include "viewer/_logo.html" %}<span class="wordmark">ForGIA</span></a>{% if image_tag %}<span class="ver" title="지금 떠 있는 뷰어 이미지의 판">{{ image_tag }}</span>{% endif %}</h1>
+  <span class="sub">{% block subtitle %}{% endblock %}</span>
+  <nav>{% block nav %}{% endblock %}</nav>
+  <button type="button" class="themebtn" id="themebtn" aria-label="테마">
+    <svg class="ic-system" viewBox="-12 -12 24 24" aria-hidden="true"><circle r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M0 -9A9 9 0 0 1 0 9Z" fill="currentColor"/></svg>
+    <svg class="ic-light" viewBox="-12 -12 24 24" aria-hidden="true"><circle r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M0 -10V-7.5M0 7.5V10M-10 0H-7.5M7.5 0H10M-7.1 -7.1L-5.3 -5.3M5.3 5.3L7.1 7.1M-7.1 7.1L-5.3 5.3M5.3 -5.3L7.1 -7.1"/></g></svg>
+    <svg class="ic-dark" viewBox="-12 -12 24 24" aria-hidden="true"><path d="M3 -9.5A8.5 8.5 0 1 0 9.5 3A7 7 0 0 1 3 -9.5Z" fill="currentColor"/></svg>
+  </button>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<script>
+  (function () {
+    var b = document.getElementById('themebtn');
+    var NAMES = {system: '시스템을 따름', light: '밝게', dark: '어둡게'};
+    function label() {
+      b.title = '테마: ' + NAMES[window.forgiaTheme.pick()] + ' — 누르면 바뀝니다';
+    }
+    if (b && window.forgiaTheme) {
+      label();
+      b.addEventListener('click', function () { window.forgiaTheme.cycle(); label(); });
+    }
+  })();
+  // 뒤로 가기로 돌아오면 브라우저가 캐시된 화면을 되살린다(bfcache). 그때는 다시 받는다.
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) location.reload();
+  });
+</script>
+</body>
+</html>

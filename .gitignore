@@ -1,0 +1,56 @@
+__pycache__/
+*.pyc
+
+# 장비마다 다른 값 (데이터 위치, 비밀키). .env.template 이 견본이다
+.env
+
+# ../devdocs/guides 로 가는 심볼릭 링크. devdocs 는 private 이고 이 저장소는
+# public 이라 커밋하지 않는다 (.guides/README.md 참고)
+.guides
+
+# 원본 이미지 — 촬영 데이터, 깃에 넣지 않는다. /data3/ForGIA/photos/ 에 있다
+photos/
+
+# 파생 산출물 — 스크립트로 언제든 재생성 가능하고 용량이 크다
+out/
+out_hi/
+stacked/
+*.npy
+
+.venv/
+
+# DB 는 저장소 밖이다. 사람의 교정은 review/*.json 으로 내보내 git 에 남긴다
+ForGIA.db
+ForGIA.db-wal
+ForGIA.db-shm
+
+# 백업이 무결성 실패를 겪었다는 깃발 (db_sentinel.py). DB 옆에 놓이므로 개발
+# 장비에서는 저장소 안에 생긴다. 그 장비의 지금 상태이지 코드가 아니다
+INTEGRITY_FAIL
+
+# DB 사본. backup_db.py 가 만든다 — 로컬 안전망이라 깃에 넣지 않는다
+backup/
+
+# 뷰어가 만드는 썸네일 캐시 — 원본에서 언제든 다시 생성된다
+web/.thumbcache/
+
+# devlog 는 .md 로만 둔다. docx 변환은 docs/ 의 보고서에만 한다.
+devlog/*.docx
+
+# 지도 자료 원본 — tools/README.md 의 명령으로 언제든 받는다
+tools/*.geojson
+
+# YOLO 학습 자료 꾸러미 — /data3/ForGIA/datasets 에 있고 export_yolo.py 로
+# 언제든 다시 만든다
+datasets/
+
+# 학습 산출물 — 가중치·그래프·예측 그림. 자료 꾸러미로 언제든 다시 만든다.
+runs/
+# 사전학습 가중치 — ultralytics 가 없으면 받아 온다
+yolo11*.pt
+
+# mermaid-cli. `md2docx.py` 가 도표를 그림으로 구울 때만 쓴다 —
+#   NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm i --no-save @mermaid-js/mermaid-cli
+# **없으면 도표가 조용히 코드 블록으로 떨어진다.** 파일은 그럴듯하게 나오고
+# 크기만 3분의 1이 된다 — 굽고 나면 크기를 견줄 것.
+node_modules/

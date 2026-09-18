@@ -1,0 +1,16 @@
+# 시험에만 쓰는 것 (DiaRUGA P08). **어느 컨테이너 이미지에도 안 들어간다.**
+#
+#   pip install -r requirements-web.txt -r requirements-dev.txt
+#   python web/manage.py test viewer
+#
+# **pytest 가 없는 것은 실수가 아니다.** 시험은 Django 기본 러너로 돈다 —
+# `requirements-web.txt` 가 "뷰어는 Django 와 PIL 만 쓴다" 는 경계를 지키고
+# 있고, pytest-django 로 얻는 것보다 그 경계가 흐려지는 값이 비싸다.
+
+# 4겹(브라우저). 이벤트 배선·읽기 전용 화면은 이것으로만 잡힌다 (DiaRUGA 045).
+#
+#   playwright install chromium
+#
+# **사내망에서는 `NODE_EXTRA_CA_CERTS` 를 함께 줘야 한다** — node 가 시스템 CA
+# 저장소를 안 봐서 `SELF_SIGNED_CERT_IN_CHAIN` 으로 죽는다.
+playwright==1.62.0

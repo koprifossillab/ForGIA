@@ -1,7 +1,7 @@
 # [계획] DiaRUGA 에서 무엇을 얼마나 가져오나
 
 **작성일** 2026-09-18
-**상태** 확정 — 5절의 물음을 같은 날 다 정했다. 코드는 아직 한 줄도 없다
+**상태** 확정 — 5절의 물음을 같은 날 다 정했다. **0단계는 같은 날 끝냈다**(HANDOFF)
 **읽은 것** `~/projects/DiaRUGA` (v0.29.0, 2026-09-18) — `CLAUDE.md` · `README.md` ·
 `HANDOFF.md` 1~2절 · `web/viewer/models.py` · `pipeline/judge.py` · `docs/…_pipeline-rationale.md` ·
 `devlog/P01`·`P27`
@@ -10,8 +10,8 @@
 
 ## 0. 한 줄
 
-**Forgia 는 유공충(foraminifera) 동정 프로그램이다.** DiaRUGA 가 규조 사진을
-받아 검출·교정하고 그것으로 검출기를 학습시키듯, Forgia 는 픽킹 슬라이드 사진을
+**ForGIA 는 유공충(foraminifera) 동정 프로그램이다.** DiaRUGA 가 규조 사진을
+받아 검출·교정하고 그것으로 검출기를 학습시키듯, ForGIA 는 픽킹 슬라이드 사진을
 받아 개체를 검출·교정하고 **그 위에 종 동정 분류기를 얹는다.** 틀은 DiaRUGA 의
 뷰어·파이프라인을 그대로 쓰되, 대상이 달라 갈리는 자리가 **다섯** 있다(2절).
 
@@ -22,7 +22,7 @@
 | 사진 | **픽킹 슬라이드 전체 촬영** — 한 장에 개체 여럿. 검출 단계가 그대로 필요하다 |
 | 대상 | **부유성·저서성 둘 다** — 종 수가 수십~수백. 평면 분류표(`ClassDef`)로는 안 된다 |
 | 시료 | 남극 코어 — DiaRUGA 와 같은 지역·지점 |
-| 운영 | **같은 틀** — 같은 서버 · NAS 폴링 · Docker 두 컨테이너 · `/srv` 배포. `/Forgia/` 서브경로로 나란히 |
+| 운영 | **같은 틀** — 같은 서버 · NAS 폴링 · Docker 두 컨테이너 · `/srv` 배포. `/ForGIA/` 서브경로로 나란히 |
 
 ## 1. 방법 — fork 가 아니라 골라서 옮긴다
 
@@ -33,9 +33,9 @@ DiaRUGA 저장소를 fork 하지 않는다. 642 커밋의 이력이 전부 규�
 
 이름 규칙은 DiaRUGA 의 048 을 그대로 따른다:
 
-| DiaRUGA | Forgia | 어디 |
+| DiaRUGA | ForGIA | 어디 |
 |---|---|---|
-| `DiaRUGA` | `Forgia` | 저장소 · `/srv/Forgia` · `/data3/Forgia` · `~/venv/Forgia` · URL `/Forgia/` · `Forgia.db` |
+| `DiaRUGA` | `ForGIA` | 저장소 · `/srv/ForGIA` · `/data3/ForGIA` · `~/venv/ForGIA` · URL `/ForGIA/` · `ForGIA.db` |
 | `diaruga` | `forgia` | Docker Hub `koprifossillab/forgia` · 파이썬 패키지 `forgiaweb` · `localStorage` 키 |
 | `DIARUGA_*` | `FORGIA_*` | 환경변수 |
 | `diatom` (생물 이름 자리) | `foram` | `segment_forams.py` · YOLO 클래스 `foram` · NAS 폴더 |
@@ -50,13 +50,13 @@ DiaRUGA 저장소를 fork 하지 않는다. 642 커밋의 이력이 전부 규�
 
 ## 2. 규조와 유공충 — 갈리는 자리 다섯
 
-| | 규조 (DiaRUGA) | 유공충 (Forgia) | 그래서 |
+| | 규조 (DiaRUGA) | 유공충 (ForGIA) | 그래서 |
 |---|---|---|---|
 | **① 크기·광학** | 10~150 µm · 40x 투과광 명시야 · 0.113 µm/px · 스케일은 ZEN XML 에서 | 63 µm~1 mm 이상 · Leica 실체현미경 반사광 · 배율이 몇 배 낮다 | `zen_meta.py` 는 못 쓴다. `scale.py` 가 Leica XML → EXIF → 폴더 `scale.toml` 순으로 본다(5절) |
 | **② 투명 vs 불투명** | 투명해서 SAM2 가 조밀한 무리에서 약했다 → YOLO 로 감 · 텍스처(areolae)가 1차 관문 | 불투명 · 검은 바탕 · 픽킹해 놓아 서로 떨어져 있다 | 검출은 쉬운 쪽이다. **`judge.py` 의 텍스처·타원 관문은 뜻이 없다** — 크기 관문 + 분류기 확신도로 바꾼다 |
 | **③ 동정 단위** | 형태 둘(원형·봉상) + 속 둘 · `ClassDef` 여섯 줄 · 종명은 자유 문자열(`species`) | **종** 수십~수백 · 부유성/저서성 · 과-속-종 계층 | 분류학은 `ClassDef` 가 아니라 **`Taxon` 테이블**(계층)로. `ClassDef` 는 형태·보존 상태만 남는다 |
-| **④ 2단계 분류기** | 없다 — P27 에서 "지금 할 일이 아니다" 로 접었다 | **이것이 Forgia 의 핵심이다** | `classify_crops.py` 를 새로 만든다. 검토 화면이 확신도·후보 셋을 낸다 |
-| **⑤ 최종 산출** | 시야당 개체 수 · 비율 · 종명별 비교(202) | **군집 계수표**(시료 × 종) · 분획(>63/>125/>150 µm) · 분할(split 1/8 등)을 곱해 시료 전체로 환산 | `Sample` 에 `fraction_um`·`split_denom`·`dry_weight_g` · 산출표 화면은 `/compare/` 를 키운다 |
+| **④ 2단계 분류기** | 없다 — P27 에서 "지금 할 일이 아니다" 로 접었다 | **이것이 ForGIA 의 핵심이다** | `classify_crops.py` 를 새로 만든다. 검토 화면이 확신도·후보 셋을 낸다 |
+| **⑤ 최종 산출** | 시야당 개체 수 · 비율 · 종명별 비교(202) | **군집 계수표**(시료 × 종) · 분획(>63/>125/>150 µm) · 분할(split 1/8 등)을 곱해 시료 전체로 환산 | `Slide` 에 `fraction_um`·`split_denom`, `Sample` 에 `dry_weight_g` · 산출표 화면은 `/compare/` 를 키운다 |
 
 **그대로인 것도 많다.** 입체라 초점 시리즈가 여전히 필요하고(`focus_stack`),
 층(권역-지역-지점-시료-관찰-시야)은 같고, 교정이 `mask_key` 에 붙는 설계도
@@ -75,16 +75,16 @@ edge view 가 동정에 필수라 선택지만 갈아끼운다. `grade`(등급)�
 |---|---|---|
 | `docker-compose.yml` · `Dockerfile.base` · `Dockerfile.pipeline` · `entrypoint-web.sh` | 그대로 | 이름·포트만 |
 | `host/{deploy,smoke,dbrun,dbsync,sync_to_srv,testdeploy}.sh` | 그대로 | `smoke.sh` 가 세는 판·행 수 이름만 |
-| `nginx/*.conf` | 그대로 | `/Forgia/` 서브경로 하나 더. DiaRUGA 의 80 포트 nginx 에 location 을 **더한다** — 별도 nginx 를 띄우지 않는다 |
+| `nginx/*.conf` | 그대로 | `/ForGIA/` 서브경로 하나 더. DiaRUGA 의 80 포트 nginx 에 location 을 **더한다** — 별도 nginx 를 띄우지 않는다 |
 | `poll_nas.sh` | 손봄 | 파이프라인 단계 이름과 인자(`--scale`·`--min-um`·`--max-um`) |
 | `ca/` | 그대로 | 사내망 TLS |
 | `srv/`·`test/` env.template | 그대로 | `FORGIA_*` |
 | `warm_thumbs.sh` | 그대로 | |
 
-**같은 서버에 나란히 뜬다.** DiaRUGA 의 `/srv/DiaRUGA` 옆에 `/srv/Forgia`,
-`/data3/DiaRUGA` 옆에 `/data3/Forgia`. **GPU 잠금은 두 프로젝트가 같은 카드를
+**같은 서버에 나란히 뜬다.** DiaRUGA 의 `/srv/DiaRUGA` 옆에 `/srv/ForGIA`,
+`/data3/DiaRUGA` 옆에 `/data3/ForGIA`. **GPU 잠금은 두 프로젝트가 같은 카드를
 쓰므로 `flock` 파일을 공유해야 한다** — DiaRUGA 의 `segment_diatoms` 안 잠금이
-프로젝트 안에 있어서 Forgia 폴러가 그것을 모른다. 시스템 잠금(`/run/lock/paleo-gpu.lock`
+프로젝트 안에 있어서 ForGIA 폴러가 그것을 모른다. 시스템 잠금(`/run/lock/paleo-gpu.lock`
 같은 것)으로 둘 다 옮기는 것이 맞고, **DiaRUGA 쪽 수정이 하나 생긴다.**
 
 ### 3.2 `ops/` — **그대로 80%**
@@ -126,7 +126,7 @@ scan_nas → ingest_nas → group_focus_series → focus_stack → segment_foram
 | 모델 | 판정 | 비고 |
 |---|---|---|
 | `RunBatch` · `Run` | 그대로 | `RUN_KIND` 에 `classify` 추가 |
-| `Site` · `Locality` · `Sample` · `Slide` | 그대로 + | `Sample.fraction_um`(분획) · `split_denom`(분할 1/n) · `dry_weight_g`(건시료 무게) — 셋 다 NULL 허용. `Slide.cells`(격자 칸 수) |
+| `Site` · `Locality` · `Sample` · `Slide` | 그대로 + | `Slide.fraction_um`(분획) · `Slide.split_denom`(분할 1/n) · `Slide.cells`(격자 칸 수) · `Sample.dry_weight_g`(건시료 무게) — 전부 NULL 허용. **0단계에서 옮겼다** — 육상 갈래(`Locality.kind`·`Sample.sample_no`)는 안 가져왔다 |
 | `Viewpoint` · `Frame` · `Stack` · `Image` | 그대로 + | **시야 = 격자 한 칸.** `Viewpoint.cell`(정수·NULL 허용) — 촬영 순서로 자동, 사람이 고친다. `Image.scale_source` 는 이미 있다 |
 | `ThresholdSet` | 손봄 | 새 `judge.FIELDS` |
 | `ClassDef` | 손봄 | **형태·보존 상태만** — 온전 · 파손 · 파편 · 기타(비유공충). `is_taxon=True` 줄은 안 만든다 |
@@ -159,12 +159,12 @@ scan_nas → ingest_nas → group_focus_series → focus_stack → segment_foram
 | 목록 `/` · 시야 목록 `/d/<slug>/` · 지점 `/loc/…` | 그대로 | 권역 탭은 남극 하나 (한국 탭은 코드는 두고 안 켠다) |
 | **시야 화면 `/d/<slug>/g/<n>/`** | 손봄 | 교정·마스크·묶기·단축키 그대로. **분류 지정 메뉴가 `ClassDef` 여섯 줄이 아니라 `Taxon` 자동완성**이 된다 — 이것이 가장 큰 화면 수정. 분류기의 상위 N 을 추천으로 낸다 |
 | 크롭 갤러리 · 계측 표 | 그대로 | 계측 칼럼만 |
-| 카탈로그 `/d/<slug>/catalog/` · 검토 화면의 카탈로그 칸(183) | 손봄 | `species` → `taxon`. 동정하는 자리라 Forgia 에서 가장 많이 쓸 화면 |
+| 카탈로그 `/d/<slug>/catalog/` · 검토 화면의 카탈로그 칸(183) | 손봄 | `species` → `taxon`. 동정하는 자리라 ForGIA 에서 가장 많이 쓸 화면 |
 | 문턱 `/thresholds/` | 손봄 | 문턱 목록이 다름 |
 | 속성 편집 `/d/<slug>/edit/` | 그대로 + | 분획·분할 |
 | 시스템 설정 넷 | 그대로 | 학습 자료 탭에 **분류기 자료**(종별 크롭 수) 한 칸 더 |
 | 도감 `/atlas/…` | 그대로 | 자료만 새로 (3.6) |
-| 산출 비교 `/compare/` | **키움** | 시료 × 종 계수표 · 분획·분할 환산 · CSV — Forgia 의 최종 산출물 |
+| 산출 비교 `/compare/` | **키움** | 시료 × 종 계수표 · 분획·분할 환산 · CSV — ForGIA 의 최종 산출물 |
 | 오프라인 검토기 `/offline/` | 그대로 · **나중** | 4단계 뒤 |
 | `/healthz` · `/img` · `/crop` · `api/*` | 그대로 | |
 
@@ -213,7 +213,7 @@ DiaRUGA `CLAUDE.md` 의 "자주 빠지는 함정" 은 대부분 Django·SQLite·
 | **1 층·반입** | `Site`~`Slide`·`Viewpoint`~`Image` · `scan_nas`·`ingest_nas`·`group_focus_series`·`focus_stack` · 목록·시야 목록·지점·지도·시스템 설정(자료) · `backup_db`·`check_db` · 시험 | NAS 폴더가 시야·합성본까지 간다. 사진이 화면에 뜬다 |
 | **2 검출** | `Detection`·`Candidate`·`ThresholdSet`·`ClassDef` · `segment_forams`(YOLO) · 새 `judge`·`scale` · `refilter` · 크롭·계측·문턱 화면 · `RunBatch` 운영 화면 · GPU 시스템 잠금 | 첫 가중치는 합성 자료(5.1)로 굽는다. 실사진이 오면 DiaRUGA P04 의 길: 검토 → `export_yolo` → 재학습 |
 | **3 교정·동정** | `ViewpointReview`·`ObjectReview`·`ForamObject`·**`Taxon`** · 시야 화면(교정·묶기·마스크 그리기) · 카탈로그 · `export_review` · 시험 대부분 | 사람이 종을 붙일 수 있다. 여기까지가 "DiaRUGA 와 같은 것" |
-| **4 분류기** | `classify_crops` · `export_crops` · `Candidate.taxon_top` · 시야·카탈로그 화면의 추천·확신도 · 학습 자료 탭 | **Forgia 가 DiaRUGA 와 달라지는 자리.** 첫 가중치는 Endless Forams 로 사전학습한 것 |
+| **4 분류기** | `classify_crops` · `export_crops` · `Candidate.taxon_top` · 시야·카탈로그 화면의 추천·확신도 · 학습 자료 탭 | **ForGIA 가 DiaRUGA 와 달라지는 자리.** 첫 가중치는 Endless Forams 로 사전학습한 것 |
 | **5 산출·도감·오프라인** | `/compare/` 계수표 · 분획·분할 환산 · CSV · `Atlas*`+`render_atlas_pages` · 오프라인 검토기 | 보고서에 실을 표가 나온다 |
 
 0~1 단계는 옮기는 일이 대부분이라 빠르다. 2단계는 합성 자료로 검출기까지는 가지만
@@ -231,7 +231,7 @@ DiaRUGA `CLAUDE.md` 의 "자주 빠지는 함정" 은 대부분 Django·SQLite·
 | **z-stack** | **사람이 초점을 바꿔 여러 장 찍는다** — DiaRUGA 와 같다 | `group_focus_series` **그대로** (손봄 → 그대로) |
 | **시야의 뜻** | **격자 슬라이드, 한 시야 = 격자 한 칸.** 칸 번호는 **촬영 순서 = 칸 순서**로 자동 매기고 건너뛴 칸은 사람이 화면에서 고친다 | `Viewpoint.cell`(정수, NULL 허용) · 시야 목록에 칸 번호 |
 | **NAS 폴더 이름** | DiaRUGA 규칙 + **분획 접미사** — `<촬영일>/<지역>-<지점> <깊이>cm >125um (관찰)`. 분획 토막이 없으면 `fraction_um` 은 빈다 | `naming.py` 에 토막 하나 |
-| **시료에 기록할 것** | **분획(`fraction_um`) · 분할(`split_denom`, 1/n 의 n) · 건시료 무게(`dry_weight_g`)** — 셋 다 NULL 허용. 계수표가 개체/g 로 환산한다 | `Sample` · `/compare/` |
+| **시료에 기록할 것** | **분획(`fraction_um`) · 분할(`split_denom`, 1/n 의 n) · 건시료 무게(`dry_weight_g`)** — 셋 다 NULL 허용. 계수표가 개체/g 로 환산한다. **0단계에서 자리를 고쳤다**: 분획·분할은 관찰(`Slide`)의 것이고 무게만 `Sample` 이다 — 같은 시료를 분획 둘로 픽킹하면 슬라이드가 둘이다 | `Slide` · `Sample` · `/compare/` |
 | **분류 체계 정본** | **WoRMS** — AphiaID · 계층 · 동의어를 API 로. `harvest_worms.py` 그대로 | `Taxon` 반입 |
 | **첫 종 목록** | **WoRMS 의 유공충 전체를 반입하고 쓰는 것만 `active` 로 켠다.** 자동완성은 켠 것만 낸다 — 목록을 사람이 따로 만들지 않는다 | `Taxon.active` · 시스템 설정 |
 | **사전학습 자료** | **Endless Forams 를 쓴다**(현생 부유성 35종 · CC BY) — 부유성 분류기의 첫 가중치. 저서성은 우리 검토에서 모은다 | 4단계 |
@@ -239,7 +239,9 @@ DiaRUGA `CLAUDE.md` 의 "자주 빠지는 함정" 은 대부분 Django·SQLite·
 | **도감** | **사내망 안에서만 보는 PDF 도판** — DiaRUGA 틀 그대로. **오프라인 꾸러미·외부 배포는 안 만든다**(상업 출판 도감이라) | 3.6 · `build_offline_atlas` 는 도감에 안 쓴다 |
 | **라이선스** | **AGPL-3.0**, DiaRUGA 와 같게. 분류기도 같은 저장소 | `LICENSE` |
 | **GPU 잠금** | **시스템 잠금으로 둘 다 옮긴다** — `/run/lock/paleo-gpu.lock` 같은 공유 경로를 `flock`. **DiaRUGA `segment_diatoms.py` 수정 하나가 생긴다** — 저쪽에 따로 알리고 한다 | 3.1 · 2단계 |
-| **뷰어 테마** | **연보라.** `base.html` 색 토큰(`--accent` 계열)만 갈고 밝음/어둠 두 벌 다 채운다 — DiaRUGA 201 의 `data-theme` 틀 그대로 | 0단계 |
+| **뷰어 테마** | **연보라.** `base.html` 색 토큰(`--accent` 계열)만 갈고 밝음/어둠 두 벌 다 채운다 — DiaRUGA 201 의 `data-theme` 틀 그대로. 강조색은 로고 원본의 `#c4b5fd` | 0단계 (했다) |
+| **이름 표기** | **`ForGIA`** — 로고 워드마크의 대문자 그대로(사용자 2026-09-18). DiaRUGA 규칙대로 대문자 자리가 약자다. 저장소·경로·DB 전부 `ForGIA`, 소문자가 강제되는 자리만 `forgia`. GitHub 저장소 이름은 admin 이 바꾼다 | 1절 |
+| **로고** | 사용자 제공 `forgia_logo.svg`(부유성 마크 + 워드마크 + 저서성 사슬 + 밑줄). `docs/assets/logo/` 에 원본, `_logo.html`·`_logo_benthic.html` 로 갈라 심었다 — DiaRUGA `_logo.html` 과 같은 방식(글자는 HTML, 색은 `currentColor`) | 0단계 (했다) |
 
 ### 5.1 NAS 에 있는 것 — 합성 자료 (2026-09-17 올라옴)
 

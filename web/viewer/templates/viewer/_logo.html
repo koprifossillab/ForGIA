@@ -1,0 +1,36 @@
+{% comment %}
+  ForGIA 마크. 원본은 `N:\DiaRUGA\Diadiction\temp\forgia_logo.svg` (2026-09-18,
+  사용자 제공 · `docs/assets/logo/` 에 사본을 둔다). 원본은 부유성 마크 + 워드마크
+  + 저서성 사슬 바탕 + 밑줄 넷으로 된 680×280 그림이고, 여기 남는 것은
+  **부유성 마크**(트로코스파이럴 방 여섯 + 가시 일곱)뿐이다.
+
+  **왜 원본을 그대로 안 쓰는가.** DiaRUGA `_logo.html` 과 같은 이유다 — 원본의
+  워드마크는 Montserrat ExtraBold 인데 이 서버에 없고 사내망이라 웹폰트를 받아
+  올 수도 없다. 그대로 두면 기기마다 다른 글꼴로 나온다. 그래서 글자는 SVG 에서
+  빼고 HTML 로 쓴다(`base.html` 의 h1). 저서성 사슬은 `_logo_benthic.html` 로
+  갈라 워터마크 바탕에만 깐다.
+
+  **색은 `currentColor` 다.** 원본은 `#c4b5fd`(연보라)로 박혀 있는데, 그러면
+  밝은 테마에서 흰 바탕에 옅은 보라가 되어 안 보인다. 부모의 색을 물려받게
+  두면 테마가 알아서 맞춘다 — 어두운 쪽에서는 `--accent` 가 곧 그 색이다.
+
+  선 굵기는 원본(3)보다 굵다 — 116 폭에 그린 선을 21 px 로 줄이면 사라진다.
+
+  쓰임: {% include "viewer/_logo.html" %}  — 크기는 CSS(.logomark)가 정한다
+{% endcomment %}
+<svg class="logomark" viewBox="-70 -52 118 112" aria-hidden="true" focusable="false"
+     fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round">
+  <circle cx="20" cy="12" r="11"/>
+  <circle cx="10" cy="26" r="13"/>
+  <circle cx="-14" cy="28" r="16"/>
+  <circle cx="-30" cy="10" r="19"/>
+  <circle cx="-20" cy="-14" r="22"/>
+  <circle cx="0" cy="0" r="26"/>
+  <line x1="26" y1="0" x2="40" y2="0"/>
+  <line x1="30.6" y1="15.2" x2="44" y2="19.3"/>
+  <line x1="13.8" y1="38.5" x2="17.9" y2="52"/>
+  <line x1="-22" y1="41.9" x2="-29" y2="54.1"/>
+  <line x1="-49" y1="10" x2="-63" y2="10"/>
+  <line x1="-31" y1="-33.1" x2="-38" y2="-45.3"/>
+  <line x1="18.4" y1="-18.4" x2="28.4" y2="-28.4"/>
+</svg>

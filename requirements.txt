@@ -1,0 +1,19 @@
+# 유공충 픽킹 슬라이드 사진 분석 파이프라인 + 동정 뷰어
+#
+# 이 파일은 호스트 venv 하나에 전부 까는 입구다. 컨테이너는 갈라 놓은 두 파일을
+# 따로 쓴다 — web 이미지에 torch 6 GB 를 넣지 않기 위해서다 (DiaRUGA P03):
+#
+#   requirements-web.txt       뷰어       Django, pillow, gunicorn
+#   requirements-pipeline.txt  파이프라인  torch, opencv, onnxruntime (web 을 포함한다)
+#   requirements-yolo.txt      ultralytics. `--no-deps` 로 파이프라인 위에 얹는다
+#
+# 설치:
+#   python -m venv ~/venv/ForGIA && . ~/venv/ForGIA/bin/activate
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu126
+#
+# 이 저장소의 venv 는 ~/venv/ForGIA 이다. CUDA 12.6 기준.
+
+-r requirements-pipeline.txt
+
+# 보고서 .md -> .docx 변환 (tools/md2docx.py). 어느 컨테이너 이미지에도 안 넣는다.
+python-docx==1.2.0

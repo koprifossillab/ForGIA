@@ -1,0 +1,78 @@
+# ForGIA 이미지를 굽는 구성 (P03).
+#
+#   docker compose -f deploy/docker-compose.yml build          # 둘 다
+#   docker compose -f deploy/docker-compose.yml build web      # 뷰어만 (빠르다)
+#
+# 판을 올릴 때는 태그를 주고 굽고 밀어 올린다:
+#   FORGIA_TAG=v0.1.1 docker compose -f deploy/docker-compose.yml build
+#   FORGIA_TAG=v0.1.1 docker compose -f deploy/docker-compose.yml push
+#
+# 이름을 레지스트리 형태로 두는 이유: 굽고 나서 따로 `docker tag` 하는 단계가
+# 있으면 그 단계를 잊는다. 굽는 순간 이미 올릴 수 있는 이름이어야 한다.
+#
+# **운영은 이 파일로 하지 않는다.** 배포는 /srv/ForGIA/docker-compose.yml 이다
+# (phyloserver 와 같은 갈래 — 저장소는 굽고, /srv/<앱>/ 은 돌린다):
+#
+#   cd /srv/ForGIA && docker compose up -d web
+#   cd /srv/ForGIA && docker compose run --rm pipeline <명령>
+#
+# 그래도 여기서 바로 돌려볼 수 있게 마운트는 배포와 같게 맞춰 두었다.
+# 컨테이너 안팎의 경로가 같아서 명령을 그대로 옮겨 쓸 수 있다.
+
+# 프로젝트 이름을 박아 둔다 (048) — 저장소 디렉토리가 `ForGIA` 라 안 적으면
+# compose 가 소문자로 깎아 쓴다. 배포 쪽과 같은 이름으로 맞춰 둔다.
+name: forgia
+
+x-common: &common
+  # root 로 돌면 ForGIA.db 소유자가 바뀌어 호스트의 backup_db.py·check_db.py 가
+  # 못 쓰게 된다. 교정이 재생성 불가라 이건 양보할 수 없다.
+  user: "1000:1000"
+  environment: &common-env
+    # **시간대를 호스트에 맞춘다.** 컨테이너 기본은 UTC 라, 그 안에서 뜬 사본
+    # 이름이 KST 이름과 아홉 시간 어긋난 채 한 디렉토리에 섞인다. 정리 규칙이
+    # 이름순 정렬(`sorted(glob)[:-keep]`)이라 그러면 **가장 새 사본을 지우고
+    # 옛것을 남긴다.** 로그 시각이 호스트와 어긋나는 것도 함께 사라진다.
+    TZ: Asia/Seoul
+    FORGIA_DB: /srv/ForGIA/db/ForGIA.db
+    FORGIA_DATA_ROOT: /data3/ForGIA
+    FORGIA_THUMB_CACHE: /data3/ForGIA/.thumbcache
+    FORGIA_DEBUG: "0"
+    FORGIA_SECRET_KEY: ${FORGIA_SECRET_KEY:-dev-only-not-a-secret}
+    FORGIA_HOSTS: ${FORGIA_HOSTS:-}
+  volumes:
+    # DB 가 있는 곳. **파일이 아니라 디렉토리째로** 물린다 — WAL 이 만드는
+    # -wal·-shm 형제가 컨테이너 안쪽에 생기면 호스트와 WAL 을 공유하지 못한다.
+    - /srv/ForGIA/db:/srv/ForGIA/db
+    # 사진·산출물
+    - /data3/ForGIA:/data3/ForGIA
+
+services:
+  web:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.base
+    image: koprifossillab/forgia:${FORGIA_TAG:-latest}
+    entrypoint: ["/app/deploy/entrypoint-web.sh"]
+    ports:
+      - "127.0.0.1:8091:9090"
+
+  pipeline:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.pipeline
+    image: koprifossillab/forgia-pipeline:${FORGIA_TAG:-latest}
+    profiles: ["manual"]        # `up` 에 딸려 뜨지 않게 — 일회성으로만 돌린다
+    volumes:
+      - /srv/ForGIA/db:/srv/ForGIA/db
+      - /data3/ForGIA:/data3/ForGIA
+      # NAS 는 **읽기 전용**. 촬영 원본을 건드리지 않는다 (P01 §1)
+      - /nfs/temp-share/ForamPhotos:/nfs/temp-share/ForamPhotos:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
