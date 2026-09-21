@@ -1,8 +1,8 @@
 # HANDOFF
 
-**2026-09-21** · 3단계 코드 끝 · 운영(8092 · `/ForGIA/`)과 시험(8093) 떠 있음 · **GPU 복구됨(재부팅)** · 백업 cron 들어감. 이어서 할 사람은 여기부터.
+**2026-09-21** · 3단계 코드 끝 · **운영 `v0.3.0`**(8092 · `/ForGIA/` · 첫 정식 판 · Docker Hub)과 시험(8093) 떠 있음 · **GPU 복구됨(재부팅)** · 백업 cron 들어감. 이어서 할 사람은 여기부터.
 
-## 0. admin 이 할 것 (sudo · 2026-09-18 sclee) — **2026-09-21 기준 1·2·4 는 끝났다.** 남은 것은 3 의 `v0.1.0` 태그·정식 배포뿐(시크릿은 있다). 백업 cron 은 `deploy/host/crontab.ForGIA` 로 넣었다(paleoadmin)
+## 0. admin 이 할 것 (sudo · 2026-09-18 sclee) — **2026-09-21 기준 넷 다 끝났다.** 정식 판은 `v0.1.0` 이 아니라 **`v0.3.0`** 으로 찍었다(운영이 `v0.3.0-dev` 로 돌던 것과 번호를 맞췄다) → CI → Docker Hub → `deploy.sh v0.3.0` · smoke 7/7. 백업 cron 은 `deploy/host/crontab.ForGIA` 로 넣었다(paleoadmin)
 
 `sclee` 계정으로는 못 하는 넷이다 — 전부 sudo 이거나 `koprifossillab` 의 것.
 **위에서부터 차례로 하면 된다.** 셋째까지는 몇 분 일이다.
@@ -52,7 +52,7 @@ WoRMS)** 가 있다([003](devlog/20260918_003_stage3-review-taxon.md)) — DiaRU
 
 | | 지금 |
 |---|---|
-| 뷰어 | **운영이 떠 있다** — `forgia-web-1`(`:8092` · `koprifossillab/forgia:v0.3.0-dev`, 이 머신에서 구운 것 · Docker Hub 에는 없다) → `http://paleolab/ForGIA/`. 시험 `forgia-test-web-1`(`:8093` · v0.1.0-dev). 정식 판 `v0.1.0` 태그는 admin 이 |
+| 뷰어 | **운영이 떠 있다** — `forgia-web-1`(`:8092` · `koprifossillab/forgia:v0.3.0`, CI 가 Docker Hub 로 민 첫 정식 판 · 2026-09-21) → `http://paleolab/ForGIA/`. 시험 `forgia-test-web-1`(`:8093` · v0.1.0-dev) |
 | 파이프라인 | 반입 넷 + 검출(`segment_forams` · YOLO 하나)·`judge`·`refilter`·`batch_plan`. 폴러 4b 검출 고리 있음. **파이프라인 이미지는 아직 안 구웠다** |
 | DB | 운영 `/srv/ForGIA/db/ForGIA.db` = 개발 DB 의 사본 — **합성 사진 슬라이드 하나**(`obs_label` "합성 시험자료" · 사진은 `/data3/ForGIA/photos/260918/`). 실사진이 오면 이 슬라이드는 지운다 |
 | 자료 | NAS `Forams/Foram_YOLO_microscopy_scaled_v2` — **합성** 자료 660장 (P01 5.1) → `/data3/ForGIA/datasets/synth_v2`. 실사진은 장비가 아직 없다 |

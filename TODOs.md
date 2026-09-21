@@ -36,5 +36,5 @@
 - ~~Docker Hub 시크릿을 저장소에~~ — 2026-09-18 등록돼 있다
 - ~~nginx `ForGIATest-subpath.conf` include~~ · ~~paleolab 첫 화면 Foram Viewer 카드 · `/foram/` 알리아스~~ — 들어갔다(2026-09-21 확인 · `/foram/` → 301 `/ForGIA/`)
 - **백업 cron 이 없었다** — 09-18~21 사흘 동안 사본이 안 떠서 `/healthz` 가 `degraded` 였다. 2026-09-21 에 paleoadmin crontab 에 시간별(`:25` · dbtool 컨테이너)·일별 NAS(`05:10`) 두 줄을 넣었다 — `deploy/host/crontab.ForGIA`. 첫 자동 사본이 `logs/backup.log` 에 찍히는지 볼 것
-- 운영 이미지 `v0.3.0-dev` 는 이 머신에서 구운 것 — 정식 판(`v*` 태그 → CI → Docker Hub)으로 갈아 끼운다
+- ~~운영 이미지 `v0.3.0-dev` 를 정식 판으로~~ — `v0.3.0` 태그 → CI → Docker Hub → `deploy.sh v0.3.0` (2026-09-21)
 - ~~DiaRUGA `views.py:741` 의 `attached` 버그를 저쪽에 알린다~~ — DiaRUGA `TODOs.md` 에 적었다 (2026-09-18)
