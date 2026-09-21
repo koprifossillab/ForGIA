@@ -56,7 +56,9 @@
           <form method="post" class="inline">{% csrf_token %}
             <input type="hidden" name="act" value="review_batch">
             <input type="hidden" name="batch" value="{{ b.batch.pk }}">
-            <button type="submit"
+            {% comment %} `pick` — 같은 줄에 코드 적는 단추(적기)가 하나 더 있어
+                 브라우저 시험이 이것을 이름으로 짚는다 {% endcomment %}
+            <button type="submit" class="pick"
                     onclick="return confirm('검토할 묶음을 {{ b.batch.label }} 로 바꿉니다.\n\n· 시야 {{ b.n_views }}개가 이 묶음의 검출을 봅니다{% if b.n_blank %}\n· 시야 {{ b.n_blank }}개는 이 묶음에 검출이 없어 빈 화면이 됩니다{% endif %}\n· 교정은 묶음마다 따로 남아 안 지워집니다\n\n되돌리려면 다시 여기서 고르면 됩니다.')">
               이것으로 검토
             </button>

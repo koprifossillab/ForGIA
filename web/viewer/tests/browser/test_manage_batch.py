@@ -8,6 +8,10 @@
   안 먹을 뻔했다. `.tools` 가 그렇게 세 화면을 속인 적이 있다(051)
 - **누르기 전에 무엇이 달라지는지 보이는가** — 숫자가 화면에 있어야 한다
 - **눌러서 바뀌는가**
+
+ForGIA 에서 달라진 것: 줄마다 카탈로그 코드를 적는 단추(적기)가 하나 더 있다
+(3단계). 그래서 "바꾸는 단추" 는 `button.pick` 으로 짚는다 — 맨 `button` 으로
+잡으면 코드 칸의 것이 먼저 걸려 헛눌린다.
 """
 from django.urls import reverse
 
@@ -78,7 +82,7 @@ class ManageBatchPickerTest(BrowserTestCase):
 
         for tr in self.rows():
             if self.other.batch.label in (tr.inner_text() or ""):
-                btn = tr.query_selector("button")
+                btn = tr.query_selector("button.pick")
                 self.assertIsNotNone(btn, "바꾸는 단추가 없다")
                 btn.click()
                 break
@@ -93,5 +97,5 @@ class ManageBatchPickerTest(BrowserTestCase):
         """이미 보고 있는 것을 다시 고를 이유가 없다 — 누르면 거절만 나온다."""
         page = self.open_manage()
         now = page.query_selector("tr.nowrow")
-        self.assertIsNone(now.query_selector("button"),
+        self.assertIsNone(now.query_selector("button.pick"),
                           "검토 중인 줄에 바꾸는 단추가 있다")
