@@ -3,7 +3,7 @@
 ## 2단계에서 남은 것
 
 - **씨앗 가중치 다시 굽기 — jikhanserver(RTX 8000)에서** (사용자 2026-09-21). `yolo11m-seg`·1024·batch 8·100 epochs — DiaRUGA 와 같은 `11m` 이다(`11n` 은 정한 적 없는 값으로 docstring 예시가 옮겨 적힌 것이었다). 꾸러미·명령은 NAS `/nfs/temp-share/ForGIA/train/synth_v2/README_train.md`(`path: .`·`SHA256SUMS`). 결과는 `/data3/ForGIA/models/11m-synth-v2-1024.pt` 로
-- **파이프라인 이미지 굽기** (`deploy/Dockerfile.pipeline`) · 시험 배포에서 `poll_nas.sh` 한 바퀴 → `check_db` → 화면
+- ~~파이프라인 이미지 굽기 · 폴러 한 바퀴~~ — 2026-09-22 `forgia-pipeline:v0.1.0`(7.37 GB · 이 머신) · `.env` `PIPELINE_TAG=v0.1.0`. 폴러 한 바퀴(정찰 4.8초 · 새것 없음 · 밀린 것 없음)와 사본 DB 에서 GPU 검출(`device=cuda` · Run #7)·`check_db` 통과. **남은 것**: ① crontab 에 `* * * * * /srv/ForGIA/bin/poll_nas.sh` (paleoadmin) ② Docker Hub 로 밀지(`FORGIA_TAG=v0.1.0 docker compose -f deploy/docker-compose.yml push pipeline`) — 사람이 정한다 ③ 실제 슬라이드가 NAS `Forams/<촬영일>/` 에 오면 반입 갈래를 처음 밟는다
 - **판정 기본값(63~2000 µm · conf 0.25)** 을 실사진으로
 - ~~호스트 NVIDIA 드라이버 판 어긋남 — admin 재부팅~~ — 2026-09-21 재부팅으로 풀렸다(580.178.04 · 컨테이너에서 3060 Ti 잡힘)
 
