@@ -87,7 +87,16 @@ INSTALLED_APPS = [
 ]
 
 # 인증/세션이 없으므로 미들웨어도 최소한만.
-MIDDLEWARE = ["django.middleware.common.CommonMiddleware"]
+# 잠금 화면(viewer/gate.py)은 아래 GATE_CODE 가 비어 있으면 아무 일도 안 한다.
+MIDDLEWARE = [
+    "django.middleware.common.CommonMiddleware",
+    "viewer.gate.GateMiddleware",
+]
+
+# 접속 코드 (viewer/gate.py 머리말). **비어 있으면 잠그지 않는다** — 시험·개발
+# 서버는 이 갈래다. 운영은 /srv/ForGIA/.env 에 넣는다. 바꾸면 이미 들어온
+# 브라우저도 모두 다시 묻는다.
+GATE_CODE = os.environ.get("FORGIA_GATE_CODE", "").strip()
 
 ROOT_URLCONF = "forgiaweb.urls"
 

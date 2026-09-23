@@ -1,0 +1,104 @@
+{% comment %}
+  잠금 화면 (viewer/gate.py). DiaRUGA 의 같은 파일에서 왔다 — 이름과 색만 다르다.
+  base.html 을 물려받지 않는다 — 머리줄·지도·도구가
+  하나도 필요 없고, 코드를 넣기 전에 뷰어의 다른 자원을 부르지 않게 하려는 것이다.
+
+  **로고는 그려지는 GIF → 원본 PNG 로 바뀐다.** GIF 는 `tools/gate_logo.py` 가
+  원본 PNG 에서 구워 끝 장면이 원본과 같다 — 그래서 바꾸는 순간이 눈에 안 보인다.
+  바꾸는 시각은 GIF 가 끝 장면에 닿는 `build_ms`(logo.json)다. GIF 는 한 번만
+  돌고 끝 장면에 멈추므로, 스크립트가 못 돌아도 로고는 제대로 남는다.
+
+  **바탕색은 GIF 에 구워져 있다** (`tools/gate_logo.py` 의 BG). 여기 `--bg` 를
+  바꾸면 GIF 둘레에 네모가 비친다 — 둘을 함께 바꾼다. 테마(data-theme)를 안 따르는
+  것도 그 때문이다: 로고가 어두운 바탕을 전제로 그려져 있다.
+{% endcomment %}<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ForGIA</title>
+<link rel="preload" as="image" href="{% url 'gate_asset' 'logo.gif' %}">
+<style>
+  :root {
+    --bg: #0a0a0f; --fg: #ece9f5; --muted: #948fa8; --line: #27243a;
+    --field: #14121c; --accent: #c4b5fd; --on-accent: #17122b; --warn: #fca5a5;
+  }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans KR", "Noto Sans CJK KR", sans-serif; }
+  main { min-height: 100vh; box-sizing: border-box; padding: 24px 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .logo { display: block; width: min(560px, 92vw); aspect-ratio: 680 / 280; }
+  .logo img { display: block; width: 100%; height: 100%; }
+  form { width: min(340px, 92vw); margin-top: 4px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+    opacity: 0; transform: translateY(10px);
+    animation: gate-rise .7s cubic-bezier(.2, .7, .2, 1) forwards;
+    animation-delay: var(--form-delay, 0s); }
+  @keyframes gate-rise { to { opacity: 1; transform: none; } }
+  label { font-size: 13px; color: var(--muted); text-align: center; }
+  .field { display: flex; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; background: var(--field);
+    transition: border-color .2s, box-shadow .2s; }
+  .field:focus-within { border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
+    color: var(--fg); font: inherit; font-size: 16px; padding: 12px 14px; letter-spacing: .06em; }
+  button { border: 0; background: var(--accent); color: var(--on-accent);
+    font: inherit; font-weight: 600; padding: 0 18px; cursor: pointer; }
+  button:hover { filter: brightness(1.08); }
+  .wrong { color: var(--warn); font-size: 13px; text-align: center; margin: 0; }
+  .note { color: var(--muted); font-size: 12px; text-align: center; margin: 0; }
+  .wrong + .field { animation: gate-shake .36s; }
+  @keyframes gate-shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+  @media (prefers-reduced-motion: reduce) {
+    form { animation: none; opacity: 1; transform: none; }
+    .wrong + .field { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <span class="logo">
+    <img id="gate-logo" alt="ForGIA" width="680" height="280"
+         data-gif="{% url 'gate_asset' 'logo.gif' %}" data-png="{% url 'gate_asset' 'logo.png' %}"
+         data-ms="{{ build_ms }}" data-still="{{ still|yesno:'1,0' }}">
+    <noscript><img alt="ForGIA" src="{% url 'gate_asset' 'logo.png' %}" width="680" height="280"></noscript>
+  </span>
+  <form method="post" action="{% url 'gate' %}"
+        style="--form-delay: {% if still %}0s{% else %}1.1s{% endif %}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="gate-code">접속 코드</label>
+    {% if wrong %}<p class="wrong" role="alert">코드가 맞지 않습니다.</p>{% endif %}
+    <div class="field">
+      <input id="gate-code" name="code" type="password" autocomplete="current-password"
+             autofocus required>
+      <button type="submit">들어가기</button>
+    </div>
+    <p class="note">이 브라우저에서는 한 번만 넣으면 됩니다.</p>
+  </form>
+</main>
+<script>
+(function () {
+  var img = document.getElementById("gate-logo");
+  var gif = img.dataset.gif, png = img.dataset.png, ms = +img.dataset.ms || 0;
+  var still = img.dataset.still === "1" ||
+      (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  if (still || !ms) { img.src = png; return; }
+
+  // 원본을 미리 받아 풀어 둔다 — 바꾸는 순간에 비는 틈이 없게
+  var pre = new Image();
+  pre.src = png;
+  var ready = pre.decode ? pre.decode().catch(function () {}) : Promise.resolve();
+
+  img.addEventListener("load", function once() {
+    img.removeEventListener("load", once);
+    setTimeout(function () {
+      ready.then(function () { img.src = png; });
+    }, ms + 100);
+  });
+  img.src = gif;
+})();
+</script>
+</body>
+</html>

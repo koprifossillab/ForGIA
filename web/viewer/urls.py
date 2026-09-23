@@ -5,13 +5,16 @@
 """
 from django.urls import path
 
-from . import views
+from . import gate, views
 
 urlpatterns = [
     path("", views.index, name="index"),
     path("img", views.image, name="image"),
     path("crop", views.crop, name="crop"),
     path("healthz", views.healthz, name="healthz"),
+    # 잠금 화면 (gate.py). `FORGIA_GATE_CODE` 가 비어 있으면 들어와도 목록으로 보낸다
+    path("gate/", gate.gate, name="gate"),
+    path("gate/<str:name>", gate.gate_asset, name="gate_asset"),
     # 교정 저장 — **그 (이미지, 묶음) 의 교정 전체를 갈아치운다** (views.save_review)
     path("review", views.save_review, name="save_review"),
     path("loc/<str:site_code>/<str:core_code>/", views.core_page, name="core"),

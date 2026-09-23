@@ -14,6 +14,7 @@
 #   3. 판이 기대한 것인가            배포가 실제로 갈렸는가
 #   4. 자료가 있는가 (행 수 > 0)     빈 DB 를 물고도 200 은 나온다
 #   5. nginx 를 거쳐도 사는가        컨테이너만 보면 앞단이 끊긴 것을 못 본다
+#                                    (잠금 화면이 켜져 있으면 .env 의 코드로 지난다)
 #   6. /srv 의 스크립트가 저장소와 같은가   **경고만 한다** (아래)
 #
 # **3번과 4번이 이 스크립트의 값어치다.** 1·2번은 `deploy.sh` 의 기동 게이트가
@@ -138,7 +139,26 @@ fi
 # 그리고 **200 은 "떴다" 일 뿐이다.** 목록이 멀쩡해도 상세가 죽을 수 있으므로
 # 목록에서 링크를 하나 뽑아 따라가 본다 — 링크를 만들 수 있는가와 그 화면이
 # 그려지는가는 다른 물음이다.
-resp=$(curl -s --max-time 10 -w '\n%{http_code}' \
+#
+# **잠금 화면이 켜져 있으면 먼저 코드로 지나간다** (gate.py). 사람이 쓰는 길이
+# 그렇기 때문이고, 그래서 코드가 받아지는지도 여기서 함께 본다.
+JAR=$(mktemp)
+trap 'rm -f "$JAR"' EXIT
+GATE_CODE=""
+if [ -f "$SRV/.env" ]; then
+    GATE_CODE=$(grep -oP '^FORGIA_GATE_CODE=\K.*' "$SRV/.env" 2>/dev/null || true)
+fi
+if [ -n "$GATE_CODE" ]; then
+    g_code=$(curl -s -o /dev/null -c "$JAR" --max-time 10 -w '%{http_code}' \
+        -H "Host: $SMOKE_HOST" --data-urlencode "code=$GATE_CODE" \
+        "${SITE}gate/" 2>/dev/null || true)
+    if [ "$g_code" = "302" ] && grep -q forgia_gate "$JAR"; then
+        ok "잠금 화면을 코드로 지났다"
+    else
+        bad "잠금 화면이 .env 의 코드를 안 받는다 (받은 것: ${g_code:-없음})"
+    fi
+fi
+resp=$(curl -s --max-time 10 -w '\n%{http_code}' -b "$JAR" \
     -H "Host: $SMOKE_HOST" "$SITE" 2>/dev/null || true)
 site_code=$(printf '%s' "$resp" | tail -n1)
 site_html=$(printf '%s' "$resp" | sed '$d')
@@ -156,7 +176,7 @@ case "$site_code" in
             fi
         else
             origin=$(printf '%s' "$SITE" | grep -oE '^https?://[^/]+')
-            d_code=$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' \
+            d_code=$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' -b "$JAR" \
                 -H "Host: $SMOKE_HOST" "$origin$link" 2>/dev/null || true)
             if [ "$d_code" = "200" ]; then
                 ok "시야 목록 $link 200"

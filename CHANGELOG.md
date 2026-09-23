@@ -5,6 +5,7 @@
 
 | 판 | 날짜 | 무엇 |
 |---|---|---|
+| — | 2026-09-23 | 잠금 화면. `FORGIA_GATE_CODE` 가 있으면 코드를 한 번 받고 서명한 쿠키로 다시 안 묻는다 · 로고가 그려지는 GIF → 원본 PNG · `/healthz` 는 열어 둔다 · 시험 709 ([004](devlog/20260923_004_gate-screen.md)) |
 | — | 2026-09-18 | 3단계 교정·동정. 검토 화면(DiaRUGA 그대로) · 개체 카탈로그 · `ForamObject`(`taxon` FK)·`Taxon`(WoRMS · `import_worms.py`) · 학명 자동완성·학명 탭 · 묶음 카탈로그 코드 · `rebind`·`export_review`·`export_yolo` · `check_db` 3·8·9·10 · 시험 694 + 브라우저 ([003](devlog/20260918_003_stage3-review-taxon.md)) |
 | — | 2026-09-18 | 2단계 검출. `judge`(관문 둘) · `segment_forams`(YOLO) · `refilter`·`batch_plan` · `Detection`·`Candidate`·`ThresholdSet`·`ClassDef` · 검출 표·크롭·문턱·운영 탭 · `check_db` 1·2·4·6번 · 폴러 4b · 시험 118개 ([002](devlog/20260918_002_stage2-detection.md)) |
 | — | 2026-09-18 | 1단계 층·반입·뷰어. 반입 넷 · `scale.py` · 화면 일곱 · `check_db` 5·7번 · 시험 101개 ([001](devlog/20260918_001_stage1-ingest-viewer.md)) |
