@@ -14,6 +14,7 @@
 #   6. 올리고 health 게이트   200 이 안 나오면 실패로 끝낸다
 #   7. 플래그 해제            trap 이라 중간에 죽어도 풀린다
 #   8. smoke                  판·자료·안전망까지 본다 — 200 은 "떴다" 일 뿐이다
+#   9. 옛 이미지 정리         smoke 가 통과했을 때만 — 저장소마다 최근 3개 + 지금·앞 판
 #
 # **이 머신은 개발·운영·백업을 겸한다.** 가이드는 빌드를 prod 밖에서 하라고
 # 하지만 여기서는 성립하지 않는다(devlog 016). 그래서 이 스크립트는 빌드하지
@@ -33,6 +34,33 @@ PULL=1; [ "${2:-}" = "--no-pull" ] && PULL=0
 
 cd "$SRV"
 say() { echo "[$(date '+%F %T')] $*"; }
+
+# 옛 이미지를 정리한다 (.guides/web/deployment.md §5.1) — smoke 가 통과한 뒤에만 부른다.
+#
+# 이 머신은 개발·운영을 겸하고 루트 SSD 가 늘 빠듯하다. 이미지는 판마다 쌓이고 손으로
+# 치우면 잊는다 — 그래서 배포의 마지막 단계다. 저장소마다 **만든 시각으로 최근 N 개**
+# (기본 3, 태그 글자순이 아니다 — v0.9 와 v0.10 은 글자순으로 거꾸로다)와 인자로 준
+# 태그(지금 판·되돌리기에 쓸 앞 판), 컨테이너(멈춘 것·시험 인스턴스 포함)가 쓰는 이미지는
+# 남긴다. 못 지운 것은 경고만 — 정리 실패가 배포를 실패로 만들지 않는다.
+# 지울 목록만 보려면 PRUNE_DRY_RUN=1, 끄려면 PRUNE_KEEP=0.
+prune_old_images() {   # $1 = 저장소, $2… = 지킬 태그
+    local repo="$1" keep="${PRUNE_KEEP:-3}" protect img; shift
+    [ "$keep" -gt 0 ] 2>/dev/null || { echo "  옛 이미지 정리를 건너뛴다 (PRUNE_KEEP=$keep)"; return 0; }
+    protect="$(mktemp)"
+    for img in "$@"; do [ -n "$img" ] && printf '%s:%s\n' "$repo" "$img" >> "$protect"; done
+    docker ps -a --format '{{.Image}}' | grep "^$repo:" >> "$protect" || true
+    docker images "$repo" --format '{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}' \
+        | grep -v '<none>' | sort -r | tail -n +"$((keep + 1))" | cut -f2 \
+        | grep -vxF -f "$protect" \
+        | while read -r img; do
+            if [ "${PRUNE_DRY_RUN:-}" = 1 ]; then echo "  (dry-run) 지울 것: $img"
+            elif docker rmi "$img" >/dev/null 2>&1; then echo "  옛 이미지를 지웠다: $img"
+            else echo "  경고: $img 를 지우지 못했다 — 넘어간다" >&2; fi
+        done || true   # 지울 것이 없으면 grep 이 1 — set -e·pipefail 아래서 배포를 죽이지 않게
+    rm -f "$protect"
+    [ "${PRUNE_DRY_RUN:-}" = 1 ] || docker image prune -f >/dev/null 2>&1 || true
+    return 0
+}
 
 # 지금 무엇이 도는지 먼저 적는다 — 되돌릴 때 이 줄을 본다
 PREV=$(grep -oP '^IMAGE_TAG=\K.*' .env 2>/dev/null || echo "(없음)")
@@ -167,6 +195,12 @@ if [ ! -x "$SMOKE" ]; then
 fi
 
 if "$SMOKE" "$VER"; then
+    # 9) 옛 이미지 정리 — smoke 가 통과했을 때만. 지금 판과 되돌리기에 쓸 앞 판은
+    #    개수와 상관없이 남긴다. 파이프라인 이미지는 .env 의 PIPELINE_TAG 를 지킨다.
+    say "옛 이미지를 정리한다 (저장소마다 최근 ${PRUNE_KEEP:-3}개 + $VER + $PREV)"
+    prune_old_images koprifossillab/forgia "$VER" "$PREV"
+    prune_old_images koprifossillab/forgia-pipeline \
+        "$(grep -oP '^PIPELINE_TAG=\K[^\s#]+' .env 2>/dev/null || true)"
     say "=== 끝 ==="
     exit 0
 fi
