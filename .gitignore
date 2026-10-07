@@ -4,7 +4,7 @@ __pycache__/
 # 장비마다 다른 값 (데이터 위치, 비밀키). .env.template 이 견본이다
 .env
 
-# ../devdocs/guides 로 가는 심볼릭 링크. devdocs 는 private 이고 이 저장소는
+# ../kopri-devdocs/guides 로 가는 심볼릭 링크. kopri-devdocs 는 private 이고 이 저장소는
 # public 이라 커밋하지 않는다 (.guides/README.md 참고)
 .guides
 

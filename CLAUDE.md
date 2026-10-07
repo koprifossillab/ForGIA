@@ -95,8 +95,9 @@ DiaRUGA 와 같은 층이되 **둘이 다르다.** ① 육상 노두 갈래가 �
 합쳐지는 이 저장소도 같이 간다. DiaRUGA 와 같다.
 
 배포·데이터 안전 규약은 `.guides/web/README.md` (형제 프로젝트들이 같은 사고를
-겪고 도달한 표준). **없으면 devdocs 클론이 안 걸린 것이다** — `../devdocs` 를
-형제로 두고 `ln -s ../devdocs/guides .guides`. 이 저장소에는 커밋하지 않는다.
+겪고 도달한 표준 — kopri-devdocs `guides/`). **없으면 kopri-devdocs 클론이 안 걸린 것이다** —
+`../kopri-devdocs` 를 형제로 두고 `ln -s ../kopri-devdocs/guides .guides`. 이 저장소에는
+커밋하지 않는다. 2026-10-07 전에는 `../devdocs/guides` 를 가리켰다 — 절 번호는 그대로다.
 
 ## 환경
 
