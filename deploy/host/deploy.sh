@@ -22,6 +22,15 @@
 # `deploy/docker-compose.yml` 의 몫이다.
 set -euo pipefail
 
+# **본문 전체를 main() 으로 감싼다** (ForGIA 005, DiaRUGA 221 과 같은 고침).
+# bash 는 스크립트를 한 번에 다 읽지 않고 도는 대로 읽어 나간다. 그런데 8) 단계
+# (sync_to_srv.sh)가 바로 이 파일을 `cp` 로 제자리에서 덮어쓴다
+# — 도는 중에 파일이 바뀌면 읽던 자리가 어긋나 엉뚱한 줄에서 문법 오류가 난다
+# (2026-10-08 v0.32.5 배포가 health 게이트 뒤에서 그렇게 멈췄다). 함수 하나로 감싸면
+# 맨 끝의 `main "$@"` 에 닿기 전에 본문을 통째로 읽어 두므로 덮어써도 안전하다.
+# 들여쓰기는 일부러 안 했다 — 본문 diff 를 깨끗하게 두려고.
+main() {
+
 SRV="${FORGIA_SRV:-/srv/ForGIA}"
 HEALTH="${FORGIA_HEALTH:-http://127.0.0.1:8092/healthz}"
 SERVICE="${FORGIA_SERVICE:-web}"
@@ -210,3 +219,6 @@ fi
 say "smoke 가 실패했다. 새 판($VER)은 떠 있다 — 위 항목을 볼 것." >&2
 say "되돌리려면:  $0 $PREV --no-pull" >&2
 exit 1
+}
+
+main "$@"

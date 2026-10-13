@@ -51,6 +51,15 @@
 # 않고, 실행 비트는 `bin/*` 에 `chmod +x` 로 따로 준다.
 set -euo pipefail
 
+# **본문 전체를 main() 으로 감싼다** (ForGIA 005, DiaRUGA 221 과 같은 고침).
+# bash 는 스크립트를 한 번에 다 읽지 않고 도는 대로 읽어 나간다. 그런데 이 스크립트는
+# bin/sync_to_srv.sh — 바로 이 파일을 `cp` 로 제자리에서 덮어쓴다
+# — 도는 중에 파일이 바뀌면 읽던 자리가 어긋나 엉뚱한 줄에서 문법 오류가 난다
+# (2026-10-08 v0.32.5 배포가 health 게이트 뒤에서 그렇게 멈췄다). 함수 하나로 감싸면
+# 맨 끝의 `main "$@"` 에 닿기 전에 본문을 통째로 읽어 두므로 덮어써도 안전하다.
+# 들여쓰기는 일부러 안 했다 — 본문 diff 를 깨끗하게 두려고.
+main() {
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd || echo /nonexistent)"
 SRV="${FORGIA_SRV:-/srv/ForGIA}"
 IMAGE=""
@@ -197,3 +206,6 @@ else
 fi
 
 echo "완료."
+}
+
+main "$@"
