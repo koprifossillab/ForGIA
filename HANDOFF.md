@@ -2,6 +2,8 @@
 
 **2026-09-21** · 3단계 코드 끝 · **운영 `v0.3.0`**(8092 · `/ForGIA/` · 첫 정식 판 · Docker Hub)과 시험(8093) 떠 있음 · **GPU 복구됨(재부팅)** · 백업 cron 들어감. 이어서 할 사람은 여기부터.
 
+**2026-10-23** · **`v0.3.1` 배포 대기** — 보안 판(이미지 안 pip 26.1 · 베이스 갱신, 기능 변경 없음 · [006](devlog/20261023_006_security-rebuild-pip.md)). 파이프라인 이미지는 `v0.1.0` 그대로 — sdc 디스크 교체 뒤 굽는다.
+
 ## 0. admin 이 할 것 (sudo · 2026-09-18 sclee) — **2026-09-21 기준 넷 다 끝났다.** 정식 판은 `v0.1.0` 이 아니라 **`v0.3.0`** 으로 찍었다(운영이 `v0.3.0-dev` 로 돌던 것과 번호를 맞췄다) → CI → Docker Hub → `deploy.sh v0.3.0` · smoke 7/7. 백업 cron 은 `deploy/host/crontab.ForGIA` 로 넣었다(paleoadmin)
 
 `sclee` 계정으로는 못 하는 넷이다 — 전부 sudo 이거나 `koprifossillab` 의 것.

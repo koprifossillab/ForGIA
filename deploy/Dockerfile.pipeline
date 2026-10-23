@@ -50,7 +50,9 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
 # `Permission denied` 를 뱉는다. 죽지는 않지만 로그가 더러워져 진짜 문제를 가린다.
 COPY requirements-web.txt requirements-pipeline.txt ./
 COPY requirements-yolo.txt ./
-RUN pip install -r requirements-pipeline.txt \
+# pip 을 먼저 올리는 이유는 Dockerfile.base 와 같다 (006).
+RUN pip install --upgrade "pip>=26.1" \
+ && pip install -r requirements-pipeline.txt \
       --extra-index-url https://download.pytorch.org/whl/cu126 \
  && pip install --no-deps -r requirements-yolo.txt \
  && python -c "import cv2, torch, ultralytics; \
