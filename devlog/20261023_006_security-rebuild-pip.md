@@ -36,18 +36,42 @@ pip 의 결함은 전부 **악성 패키지나 인덱스로 설치할 때** 일�
 
 ## 버린 것
 
-- **파이프라인 이미지는 이번에 굽지 않는다.** Dockerfile 만 고쳐 두고
-  `PIPELINE_TAG=v0.1.0` 을 그대로 둔다. Docker 의 데이터 디렉토리가 `/data3/docker`
-  (sdc) 인데, 그 디스크가 지금 재할당 섹터 6,136 · 대기 섹터 144 로 상태가 나쁘고
-  SMR 이라 대용량 쓰기가 몰리면 수 MB/s 로 떨어진다 — 2026-10-23 오전에 다른
-  복사가 그렇게 몰려 dockerd 가 통째로 멈췄다. 파이프라인 이미지는 7 GB 다.
-  **디스크를 바꾼 뒤 굽는다.** 그때 이 줄이 이미 들어 있으니 다시 고칠 것은 없다
+- ~~파이프라인 이미지는 디스크를 바꾼 뒤 굽는다~~ — 처음엔 미뤘다. Docker 데이터 루트가
+  `/data3/docker`(sdc · 재할당 6,136 → 6,272 로 하루에 늘고 요청 한 건에 읽기 1초·쓰기 3초)
+  였고 파이프라인 이미지는 7 GB 라서다. **같은 날 Docker 를 SSD(`/data2/docker`)로 옮긴 뒤
+  `v0.1.1` 로 구웠다**(아래 2절) — `.env` 의 `PIPELINE_TAG=v0.1.1`, 컨테이너에서 CUDA 인식 확인.
+  옛 `v0.1.0` 은 Docker Hub 에 없었고 옮길 때 다시 받을 수도 없어서, 어차피 다시 구워야 했다
 - pip 판을 `==` 로 박기 — 다음 보안판을 받으려면 또 고쳐야 한다. 하한만 둔다
 - 호스트 venv(`~/venv/ForGIA`)는 이 판과 따로 다시 만들었다 — Ubuntu 26.04 에
   파이썬 3.12 가 없어져 venv 가 깨졌기 때문이고(백업·NAS 동기화 cron 이 실패하고
   있었다), uv 가 받은 3.12.15 로 같은 판의 패키지를 다시 깔았다. pip 도 그때 26.2 가 됐다
 
+## 2. 디스크 — 자리가 바뀐 것 (사용자 요청으로 함께 적는다)
+
+**`/data` 디스크(sda, 8 TB)가 고장 났다**(SMART 재할당 7,912 · 읽기 불가 1,512 ·
+파일시스템 비트맵 오류가 07-31 부터 3만 건). **`/data3` 디스크(sdc, 같은 모델)도
+열화 중이다.** 두 디스크 다 바꿀 때까지의 임시 배치다. 자세한 경위는 DiaRUGA 233.
+
+| 무엇 | 전 | 지금 (2026-10-23) |
+|---|---|---|
+| `/data` | sda | **`/data3/data-rescue` 를 bind mount** (sdc) |
+| Docker 데이터 루트 | `/data3/docker` (sdc) | **`/data2/docker`** (sdb SSD) · `containerd-snapshotter: false`. 이미지는 Docker Hub 에서 같은 digest 로 다시 받았다(뷰어 `v0.3.1`). 파이프라인은 위처럼 다시 구웠다 |
+| `/data3`·`/data` 마운트 | `relatime` | `noatime` (지금 부팅에서만) |
+| NAS 의 03:00 백업 수신(rsync 데몬) | 켜짐 | 꺼짐 — NAS 는 지금 백업이 없다 |
+| 시험 인스턴스(8093) | `v0.1.0-dev` (로컬 빌드) | `v0.3.1` — `testdeploy.sh` 로 다시 띄웠다 |
+
+**이 저장소가 쓰는 자리는 경로가 그대로다** — `/data3/ForGIA`(사진·산출물·`backup/`·
+`models/`·`.thumbcache/`), GPU 잠금 `/data3/DiaRUGA/locks`, 운영 DB `/srv/ForGIA/db`(nvme).
+`/data3` 이 열화 중인 sdc 위라는 것만 다르다 — 사진은 NAS 원본이 있고, `backup/`·`models/` 는
+매일 NAS 동기화(05:10)가 보낸다. 운영 DB 는 sdc 에 없다.
+
+**호스트 venv `~/venv/ForGIA`** — Ubuntu 26.04 에 파이썬 3.12 가 없어 깨졌고(NAS
+동기화 cron 실패), uv 가 받은 파이썬 **3.12.15** 로 다시 만들어 같은 판의 패키지를
+깔았다. 옛 것은 `~/venv/ForGIA.py312-bak`.
+
 ## 확인
 
 - 시험(호스트 venv · 다시 만든 3.12.15): `test viewer --exclude-tag browser` 694개 OK (skipped 4)
-- CI 가 구운 이미지 안에서 `pip --version` 이 26.1 이상인지 본다
+- CI 가 구운 뷰어 이미지 `v0.3.1`: pip **26.2.2** · Debian 13 · 파이썬 3.12.15
+- 파이프라인 `v0.1.1`: pip 26.2.2 · torch 2.13.0+cu126 · cv2 5.0.0 · ultralytics 8.4.7 · 컨테이너에서 `cuda True`
+- 운영 배포 10-23 12:28 · smoke 7/7 · 사본 `manual/ForGIA_20261023_121725_before-006.db` · 시험 인스턴스 `v0.3.1` smoke 7/7
